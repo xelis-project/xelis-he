@@ -1,0 +1,26 @@
+[package]
+name = "elgamaltransactions"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+
+[dependencies.curve25519-dalek]
+version = "4"
+features = ["std", "serde"] #, "zeroize"]
+# features = ["std", "simd_backend", "serde"]
+package = "curve25519-dalek-ng"
+
+[dependencies]
+bulletproofs = "4.0.0"
+bytemuck = { version = "1.14.0", features = ["derive"] }
+digest = "0.9"
+lazy_static = "1.4.0"
+merlin = "3.0.0"
+rand = "0.8.5"
+serde = { version = "1.0.193", features = ["serde_derive"] }
+serde_derive = "1.0.195"
+sha3 = "0.9.1"
+thiserror = "1.0.56"
+zeroize = "1.7.0"
