@@ -9,10 +9,16 @@ use curve25519_dalek::{
     scalar::Scalar,
     traits::{IsIdentity, MultiscalarMul, VartimeMultiscalarMul},
 };
+use lazy_static::lazy_static;
 use rand::rngs::OsRng;
 
 use merlin::Transcript;
 use zeroize::Zeroize;
+
+lazy_static! {
+    pub static ref BP_GENS: BulletproofGens = BulletproofGens::new(64, 2);
+    pub static ref PC_GENS: PedersenGens = PedersenGens::default();
+}
 
 /// Proof that a commitment and ciphertext are equal.
 #[allow(non_snake_case)]
@@ -345,12 +351,10 @@ impl Transfer {
 
         let ct_validity_proof =
             CiphertextValidityProof::new(&d_dest_pubkey, amount, &amount_opening, &mut transcript);
-        let bp_gens = BulletproofGens::new(64, 2);
-        let pc_gens = PedersenGens::default();
 
         let (range_proof, _commitments) = RangeProof::prove_multiple(
-            &bp_gens,
-            &pc_gens,
+            &BP_GENS,
+            &PC_GENS,
             &mut transcript,
             &[source_new_balance, amount],
             &[source_opening.as_scalar(), amount_opening.as_scalar()],
@@ -402,9 +406,6 @@ impl Transfer {
             &mut transcript,
         )?;
 
-        let bp_gens = BulletproofGens::new(64, 2);
-        let pc_gens = PedersenGens::default();
-
         self.ct_validity_proof.verify(
             &amount_commitment,
             &dest_pubkey_u,
@@ -413,8 +414,8 @@ impl Transfer {
         )?;
 
         self.range_proof.verify_multiple(
-            &bp_gens,
-            &pc_gens,
+            &BP_GENS,
+            &PC_GENS,
             &mut transcript,
             &[
                 new_source_commitment.as_point().compress(),
