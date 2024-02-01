@@ -20,9 +20,9 @@ impl elgamal::PedersenCommitment {
 impl PedersenCommitment {
     pub fn decompress(&self) -> Result<elgamal::PedersenCommitment, DecompressionError> {
         Ok(elgamal::PedersenCommitment::from_point(
-            CompressedRistretto::from_slice(&self.0)
-                .decompress()
-                .ok_or(DecompressionError)?,
+            CompressedRistretto::from_slice(&self.0).map_err(|_| DecompressionError)?
+            .decompress()
+            .ok_or(DecompressionError)?
         ))
     }
 }
@@ -63,8 +63,9 @@ impl ElGamalPubkey {
     pub fn decompress(&self) -> Result<elgamal::ElGamalPubkey, DecompressionError> {
         Ok(elgamal::ElGamalPubkey::from_point(
             CompressedRistretto::from_slice(&self.0)
-                .decompress()
-                .ok_or(DecompressionError)?,
+            .map_err(|_| DecompressionError)?
+            .decompress()
+            .ok_or(DecompressionError)?
         ))
     }
 }
@@ -83,8 +84,9 @@ impl DecryptHandle {
     pub fn decompress(&self) -> Result<elgamal::DecryptHandle, DecompressionError> {
         Ok(elgamal::DecryptHandle::from_point(
             CompressedRistretto::from_slice(&self.0)
-                .decompress()
-                .ok_or(DecompressionError)?,
+            .map_err(|_| DecompressionError)?
+            .decompress()
+            .ok_or(DecompressionError)?
         ))
     }
 }

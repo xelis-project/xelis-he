@@ -5,17 +5,10 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-
-[dependencies.curve25519-dalek]
-version = "4"
-features = ["std", "serde"] #, "zeroize"]
-# features = ["std", "simd_backend", "serde"]
-package = "curve25519-dalek-ng"
-
 [dependencies]
-bulletproofs = "4.0.0"
+bulletproofs = { git = "https://github.com/Stentonian/bulletproofs", branch = "stent/change-curve25519-package"}
+curve25519-dalek = { version = "4.1.1", features = ["digest", "group", "rand_core", "serde"] }
 bytemuck = { version = "1.14.0", features = ["derive"] }
-digest = "0.9"
 lazy_static = "1.4.0"
 merlin = "3.0.0"
 rand = "0.8.5"

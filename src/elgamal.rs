@@ -8,12 +8,17 @@ use curve25519_dalek::{
 };
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
+use sha3::Digest;
 use zeroize::Zeroize;
 
 lazy_static::lazy_static! {
     // base point for encoding the commitments opening
-    pub static ref H: RistrettoPoint =
-        RistrettoPoint::hash_from_bytes::<sha3::Sha3_512>(RISTRETTO_BASEPOINT_COMPRESSED.as_bytes());
+    pub static ref H: RistrettoPoint = {
+        let mut hasher = sha3::Sha3_512::default();
+        hasher.update(RISTRETTO_BASEPOINT_COMPRESSED.as_bytes());
+        let hash = hasher.finalize();
+        RistrettoPoint::from_uniform_bytes(hash.as_ref())
+    };
 }
 
 /// Wrapper type around a decrypted point. Used as return value of `decrypt` to allow fast decoding of integers.
@@ -35,7 +40,7 @@ impl ElGamalPubkey {
 
     pub fn new(secret: &ElGamalSecretKey) -> Self {
         let s = &secret.0;
-        assert!(s != &Scalar::zero());
+        assert!(s != &Scalar::ZERO);
 
         ElGamalPubkey(s.invert() * &(*H))
     }
