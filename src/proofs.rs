@@ -1,6 +1,5 @@
 use crate::{
-    compressed, elgamal::*, transcript::ProtocolTranscript, TransferProofGenerationError,
-    TransferProofVerificationError,
+    compressed, elgamal::*, transcript::ProtocolTranscript, CompressedCiphertext, CompressedPubkey, ProofGenerationError, ProofVerificationError
 };
 use bulletproofs::{BulletproofGens, PedersenGens, RangeProof};
 use curve25519_dalek::{
@@ -96,7 +95,7 @@ impl CommitmentEqProof {
         source_ciphertext: &ElGamalCiphertext,
         destination_commitment: &PedersenCommitment,
         transcript: &mut Transcript,
-    ) -> Result<(), TransferProofVerificationError> {
+    ) -> Result<(), ProofVerificationError> {
         transcript.equality_proof_domain_separator();
 
         // extract the relevant scalar and Ristretto points from the inputs
@@ -121,15 +120,15 @@ impl CommitmentEqProof {
         let Y_0 = self
             .Y_0
             .decompress()
-            .ok_or(TransferProofVerificationError::CommitmentEqProof)?;
+            .ok_or(ProofVerificationError::CommitmentEqProof)?;
         let Y_1 = self
             .Y_1
             .decompress()
-            .ok_or(TransferProofVerificationError::CommitmentEqProof)?;
+            .ok_or(ProofVerificationError::CommitmentEqProof)?;
         let Y_2 = self
             .Y_2
             .decompress()
-            .ok_or(TransferProofVerificationError::CommitmentEqProof)?;
+            .ok_or(ProofVerificationError::CommitmentEqProof)?;
 
         let check = RistrettoPoint::vartime_multiscalar_mul(
             vec![
@@ -163,7 +162,7 @@ impl CommitmentEqProof {
         if check.is_identity() {
             Ok(())
         } else {
-            Err(TransferProofVerificationError::CommitmentEqProof.into())
+            Err(ProofVerificationError::CommitmentEqProof.into())
         }
     }
 }
@@ -220,7 +219,7 @@ impl CiphertextValidityProof {
         dest_pubkey: &ElGamalPubkey,
         dest_handle: &DecryptHandle,
         transcript: &mut Transcript,
-    ) -> Result<(), TransferProofVerificationError> {
+    ) -> Result<(), ProofVerificationError> {
         transcript.ciphertext_validity_proof_domain_separator();
 
         transcript.validate_and_append_point(b"Y_0", &self.Y_0)?;
@@ -234,11 +233,11 @@ impl CiphertextValidityProof {
         let Y_0 = self
             .Y_0
             .decompress()
-            .ok_or(TransferProofVerificationError::CiphertextValidityProof)?;
+            .ok_or(ProofVerificationError::CiphertextValidityProof)?;
         let Y_1 = self
             .Y_1
             .decompress()
-            .ok_or(TransferProofVerificationError::CiphertextValidityProof)?;
+            .ok_or(ProofVerificationError::CiphertextValidityProof)?;
 
         let P_dest = dest_pubkey.as_point();
 
@@ -271,162 +270,7 @@ impl CiphertextValidityProof {
         if check.is_identity() {
             Ok(())
         } else {
-            Err(TransferProofVerificationError::CiphertextValidityProof)
+            Err(ProofVerificationError::CiphertextValidityProof)
         }
-    }
-}
-
-pub struct Transfer {
-    pub(crate) amount_commitment: compressed::PedersenCommitment,
-    pub(crate) amount_sender_handle: compressed::DecryptHandle,
-    pub(crate) amount_receiver_handle: compressed::DecryptHandle,
-    ct_validity_proof: CiphertextValidityProof,
-    range_proof: RangeProof,
-    new_source_commitment: compressed::PedersenCommitment,
-    new_commitment_eq_proof: CommitmentEqProof,
-}
-
-impl Transfer {
-    fn prepare_transcript(
-        amount_commitment: &compressed::PedersenCommitment,
-        amount_sender_handle: &compressed::DecryptHandle,
-        amount_receiver_handle: &compressed::DecryptHandle,
-        source_pubkey: &compressed::ElGamalPubkey,
-        dest_pubkey: &compressed::ElGamalPubkey,
-        new_source_commitment: &compressed::PedersenCommitment,
-    ) -> Transcript {
-        let mut transcript = Transcript::new(b"transfer-proof");
-        transcript.append_commitment(b"amount_commitment", amount_commitment);
-        transcript.append_handle(b"amount_sender_handle", amount_sender_handle);
-        transcript.append_handle(b"amount_receiver_handle", amount_receiver_handle);
-        transcript.append_pubkey(b"source_pubkey", source_pubkey);
-        transcript.append_pubkey(b"dest_pubkey", dest_pubkey);
-        transcript.append_commitment(b"new_source_commitment", &new_source_commitment);
-        transcript
-    }
-
-    pub fn new(
-        source_current_ciphertext: &compressed::ElGamalCiphertext,
-        source_current_balance: u64,
-        amount: u64,
-        source_keypair: &ElGamalKeypair,
-        dest_pubkey: &compressed::ElGamalPubkey,
-    ) -> Result<Self, TransferProofGenerationError> {
-        let d_dest_pubkey = dest_pubkey.decompress().unwrap();
-        let d_source_current_ciphertext = source_current_ciphertext.decompress().unwrap();
-
-        let amount_opening = PedersenOpening::generate_new();
-        let amount_commitment = PedersenCommitment::new_with_opening(amount, &amount_opening);
-        let amount_sender_handle = source_keypair.pubkey().decrypt_handle(&amount_opening);
-        let amount_receiver_handle = d_dest_pubkey.decrypt_handle(&amount_opening);
-
-        let amount_commitment_pod = amount_commitment.compress();
-        let amount_sender_handle_pod = amount_sender_handle.compress();
-        let amount_receiver_handle_pod = amount_receiver_handle.compress();
-
-        let source_new_balance = source_current_balance
-            .checked_sub(amount)
-            .ok_or(TransferProofGenerationError::InsufficientFunds)?;
-
-        // make a new comitment for the remaining balance in source
-        let (new_source_commitment, source_opening) = PedersenCommitment::new(source_new_balance);
-        let new_source_commitment_pod = new_source_commitment.compress();
-
-        let mut transcript = Self::prepare_transcript(
-            &amount_commitment_pod,
-            &amount_sender_handle_pod,
-            &amount_receiver_handle_pod,
-            &source_keypair.pubkey().compress(),
-            &dest_pubkey,
-            &new_source_commitment_pod,
-        );
-
-        let new_source_ciphertext = &d_source_current_ciphertext
-            - &ElGamalCiphertext::new(amount_commitment, amount_sender_handle);
-
-        let new_commitment_eq_proof = CommitmentEqProof::new(
-            source_keypair,
-            &new_source_ciphertext,
-            &source_opening,
-            source_new_balance,
-            &mut transcript,
-        );
-
-        let ct_validity_proof =
-            CiphertextValidityProof::new(&d_dest_pubkey, amount, &amount_opening, &mut transcript);
-
-        let (range_proof, _commitments) = RangeProof::prove_multiple(
-            &BP_GENS,
-            &PC_GENS,
-            &mut transcript,
-            &[source_new_balance, amount],
-            &[source_opening.as_scalar(), amount_opening.as_scalar()],
-            64,
-        )?;
-
-        Ok(Self {
-            amount_commitment: amount_commitment_pod,
-            amount_sender_handle: amount_sender_handle_pod,
-            amount_receiver_handle: amount_receiver_handle_pod,
-            ct_validity_proof,
-            range_proof,
-            new_source_commitment: new_source_commitment_pod,
-            new_commitment_eq_proof,
-        })
-    }
-
-    pub fn verify(
-        &self,
-        source_pubkey: &compressed::ElGamalPubkey,
-        source_current_ciphertext: &compressed::ElGamalCiphertext,
-        dest_pubkey: &compressed::ElGamalPubkey,
-    ) -> Result<(), TransferProofVerificationError> {
-        let source_pubkey_u = source_pubkey.decompress()?;
-        let source_current_ciphertext_u = source_current_ciphertext.decompress()?;
-        let dest_pubkey_u = dest_pubkey.decompress()?;
-
-        let mut transcript = Self::prepare_transcript(
-            &self.amount_commitment,
-            &self.amount_sender_handle,
-            &self.amount_receiver_handle,
-            &source_pubkey,
-            &dest_pubkey,
-            &self.new_source_commitment,
-        );
-
-        let amount_commitment = self.amount_commitment.decompress()?;
-        let amount_sender_handle = self.amount_sender_handle.decompress()?;
-        let amount_receiver_handle = self.amount_receiver_handle.decompress()?;
-        let new_source_commitment = self.new_source_commitment.decompress()?;
-
-        let new_source_ciphertext = &source_current_ciphertext_u
-            - &ElGamalCiphertext::new(amount_commitment.clone(), amount_sender_handle);
-
-        self.new_commitment_eq_proof.verify(
-            &source_pubkey_u,
-            &new_source_ciphertext,
-            &new_source_commitment,
-            &mut transcript,
-        )?;
-
-        self.ct_validity_proof.verify(
-            &amount_commitment,
-            &dest_pubkey_u,
-            &amount_receiver_handle,
-            &mut transcript,
-        )?;
-
-        self.range_proof.verify_multiple(
-            &BP_GENS,
-            &PC_GENS,
-            &mut transcript,
-            &[
-                new_source_commitment.as_point().compress(),
-                amount_commitment.as_point().compress(),
-            ],
-            64,
-        )?;
-
-        Ok(())
     }
 }

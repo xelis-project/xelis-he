@@ -1,21 +1,24 @@
-use bulletproofs::{ProofError, RangeProof};
-use curve25519_dalek::{ristretto::CompressedRistretto, RistrettoPoint, Scalar};
+use bulletproofs::RangeProof;
+use curve25519_dalek::{ristretto::CompressedRistretto, Scalar};
 use merlin::Transcript;
 use std::iter;
 use thiserror::Error;
 
+pub mod builder;
+
 use crate::{
-    compressed::{self, DecompressionError},
+    compressed::{CompressedCommitment, CompressedHandle, DecompressionError},
     elgamal::ElGamalCiphertext,
     proofs::{CiphertextValidityProof, CommitmentEqProof, BP_GENS, PC_GENS},
     transcript::ProtocolTranscript,
-    Role, TransferProofVerificationError,
+    CompressedCiphertext, CompressedPubkey, ECDLPInstance, ElGamalSecretKey, Role,
+    ProofVerificationError,
 };
 
 #[derive(Error)]
 pub enum VerificationError<T> {
     State(T),
-    Proof(#[from] TransferProofVerificationError),
+    Proof(#[from] ProofVerificationError),
 }
 
 /// This trait is used by the batch verification function. It is intended to represent a virtual snapshot of the current blockchain
@@ -26,36 +29,45 @@ pub trait BlockchainVerificationState {
     /// Get the balance ciphertext from an account
     fn get_account_balance(
         &self,
-        account: &compressed::ElGamalPubkey,
-    ) -> Result<compressed::ElGamalCiphertext, Self::Error>;
+        account: &CompressedPubkey,
+    ) -> Result<CompressedCiphertext, Self::Error>;
 
     /// Apply a new balance ciphertext to an account
     fn update_account_balance(
         &mut self,
-        account: &compressed::ElGamalPubkey,
-        new_ct: compressed::ElGamalCiphertext,
+        account: &CompressedPubkey,
+        new_ct: CompressedCiphertext,
     ) -> Result<(), Self::Error>;
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Transfer {
     // pub asset: Hash,
-    pub to: compressed::ElGamalPubkey,
+    pub to: CompressedPubkey,
     // pub extra_data: Option<Vec<u8>>, // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
-    pub(crate) amount_commitment: compressed::PedersenCommitment,
-    pub(crate) amount_sender_handle: compressed::DecryptHandle,
-    pub(crate) amount_receiver_handle: compressed::DecryptHandle,
+    amount_commitment: CompressedCommitment,
+    amount_sender_handle: CompressedHandle,
+    amount_receiver_handle: CompressedHandle,
     ct_validity_proof: CiphertextValidityProof,
 }
 
 impl Transfer {
-    pub fn get_ciphertext(&self, role: Role) -> compressed::ElGamalCiphertext {
+    pub fn get_ciphertext(&self, role: Role) -> CompressedCiphertext {
         let handle = match role {
             Role::Receiver => self.amount_receiver_handle,
             Role::Sender => self.amount_sender_handle,
         };
 
-        compressed::ElGamalCiphertext::new(self.amount_commitment, handle)
+        CompressedCiphertext::new(self.amount_commitment, handle)
+    }
+
+    /// Note: this function returns an `ECDLPInstance` object, which you will need to decode.
+    pub fn decrypt_amount(
+        &self,
+        sk: &ElGamalSecretKey,
+        role: Role,
+    ) -> Result<ECDLPInstance, DecompressionError> {
+        Ok(sk.decrypt(&self.get_ciphertext(role).decompress()?))
     }
 }
 
@@ -82,13 +94,13 @@ pub enum TransactionType {
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Transaction {
     version: u8,
-    owner: compressed::ElGamalPubkey,
+    owner: CompressedPubkey,
     data: TransactionType,
     fee: u64,
     nonce: u64,
     // signature: Signature,
     range_proof: RangeProof,
-    new_source_commitment: compressed::PedersenCommitment,
+    new_source_commitment: CompressedCommitment,
     new_commitment_eq_proof: CommitmentEqProof,
 }
 
@@ -115,30 +127,39 @@ impl Transaction {
         Ok(bal)
     }
 
-    fn prepare_transcript(&self) -> Transcript {
+    fn prepare_transcript(
+        version: u8,
+        owner: &CompressedPubkey,
+        fee: u64,
+        nonce: u64,
+        new_source_commitment: &CompressedCommitment,
+    ) -> Transcript {
         let mut transcript = Transcript::new(b"transaction-proof");
-        transcript.append_u64(b"version", self.version.into());
-        transcript.append_pubkey(b"owner", &self.owner);
-        transcript.append_u64(b"fee", self.fee);
-        transcript.append_u64(b"nonce", self.nonce);
-        transcript.append_commitment(b"new_source_commitment", &self.new_source_commitment);
+        transcript.append_u64(b"version", version.into());
+        transcript.append_pubkey(b"owner", owner);
+        transcript.append_u64(b"fee", fee);
+        transcript.append_u64(b"nonce", nonce);
+        transcript.append_commitment(b"new_source_commitment", new_source_commitment);
         transcript
     }
 
     // internal, does not verify the range proof
+    // returns (transcript, commitments for range proof, new source ct)
     fn pre_verify(
         &self,
-        source_current_ciphertext: &compressed::ElGamalCiphertext,
+        source_current_ciphertext: &CompressedCiphertext,
     ) -> Result<
-        (
-            Transcript,
-            Vec<CompressedRistretto>,
-            compressed::ElGamalCiphertext,
-        ),
-        TransferProofVerificationError,
+        (Transcript, Vec<CompressedRistretto>, CompressedCiphertext),
+        ProofVerificationError,
     > {
         let owner = self.owner.decompress()?;
-        let mut transcript = self.prepare_transcript();
+        let mut transcript = Self::prepare_transcript(
+            self.version,
+            &self.owner,
+            self.fee,
+            self.nonce,
+            &self.new_source_commitment,
+        );
 
         // 0. Verify Signature
         // TODO
@@ -221,7 +242,7 @@ impl Transaction {
             &BP_GENS,
             &PC_GENS,
         )
-        .map_err(TransferProofVerificationError::from)?;
+        .map_err(ProofVerificationError::from)?;
 
         Ok(())
     }

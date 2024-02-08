@@ -12,10 +12,10 @@ pub enum TranscriptError {
 pub trait ProtocolTranscript {
     fn append_scalar(&mut self, label: &'static [u8], scalar: &Scalar);
     fn append_point(&mut self, label: &'static [u8], point: &CompressedRistretto);
-    fn append_pubkey(&mut self, label: &'static [u8], point: &compressed::ElGamalPubkey);
-    fn append_ciphertext(&mut self, label: &'static [u8], point: &compressed::ElGamalCiphertext);
-    fn append_commitment(&mut self, label: &'static [u8], point: &compressed::PedersenCommitment);
-    fn append_handle(&mut self, label: &'static [u8], point: &compressed::DecryptHandle);
+    fn append_pubkey(&mut self, label: &'static [u8], point: &compressed::CompressedPubkey);
+    fn append_ciphertext(&mut self, label: &'static [u8], point: &compressed::CompressedCiphertext);
+    fn append_commitment(&mut self, label: &'static [u8], point: &compressed::CompressedCommitment);
+    fn append_handle(&mut self, label: &'static [u8], point: &compressed::CompressedHandle);
 
     fn challenge_scalar(&mut self, label: &'static [u8]) -> Scalar;
 
@@ -45,19 +45,19 @@ impl ProtocolTranscript for Transcript {
         Scalar::from_bytes_mod_order_wide(&buf)
     }
 
-    fn append_pubkey(&mut self, label: &'static [u8], pubkey: &compressed::ElGamalPubkey) {
+    fn append_pubkey(&mut self, label: &'static [u8], pubkey: &compressed::CompressedPubkey) {
         self.append_message(label, bytemuck::bytes_of(pubkey));
     }
 
-    fn append_ciphertext(&mut self, label: &'static [u8], ciphertext: &compressed::ElGamalCiphertext) {
+    fn append_ciphertext(&mut self, label: &'static [u8], ciphertext: &compressed::CompressedCiphertext) {
         self.append_message(label, bytemuck::bytes_of(ciphertext));
     }
 
-    fn append_commitment(&mut self, label: &'static [u8], commitment: &compressed::PedersenCommitment) {
+    fn append_commitment(&mut self, label: &'static [u8], commitment: &compressed::CompressedCommitment) {
         self.append_message(label, bytemuck::bytes_of(commitment));
     }
 
-    fn append_handle(&mut self, label: &'static [u8], handle: &compressed::DecryptHandle) {
+    fn append_handle(&mut self, label: &'static [u8], handle: &compressed::CompressedHandle) {
         self.append_message(label, bytemuck::bytes_of(handle));
     }
 

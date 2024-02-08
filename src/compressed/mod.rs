@@ -6,19 +6,19 @@ use thiserror::Error;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Pod, Zeroable, Serialize, Deserialize)]
 #[repr(transparent)]
-pub struct PedersenCommitment(pub [u8; 32]);
+pub struct CompressedCommitment(pub [u8; 32]);
 
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
 #[error("invalid format")]
 pub struct DecompressionError;
 
 impl elgamal::PedersenCommitment {
-    pub fn compress(&self) -> PedersenCommitment {
-        PedersenCommitment(self.as_point().compress().to_bytes())
+    pub fn compress(&self) -> CompressedCommitment {
+        CompressedCommitment(self.as_point().compress().to_bytes())
     }
 }
 
-impl PedersenCommitment {
+impl CompressedCommitment {
     pub fn as_point(&self) -> CompressedRistretto {
         CompressedRistretto(self.0)
     }
@@ -34,41 +34,41 @@ impl PedersenCommitment {
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Pod, Zeroable, Serialize, Deserialize)]
 #[repr(transparent)]
-pub struct ElGamalCiphertext(pub [[u8; 32]; 2]);
+pub struct CompressedCiphertext(pub [[u8; 32]; 2]);
 
 impl elgamal::ElGamalCiphertext {
-    pub fn compress(&self) -> ElGamalCiphertext {
-        ElGamalCiphertext([
+    pub fn compress(&self) -> CompressedCiphertext {
+        CompressedCiphertext([
             self.commitment().as_point().compress().to_bytes(),
             self.handle().as_point().compress().to_bytes(),
         ])
     }
 }
 
-impl ElGamalCiphertext {
-    pub fn new(commitment: PedersenCommitment, handle: DecryptHandle) -> Self {
+impl CompressedCiphertext {
+    pub fn new(commitment: CompressedCommitment, handle: CompressedHandle) -> Self {
         Self([commitment.0, handle.0])
     }
 
     pub fn decompress(&self) -> Result<elgamal::ElGamalCiphertext, DecompressionError> {
         Ok(elgamal::ElGamalCiphertext::new(
-            PedersenCommitment(self.0[0]).decompress()?,
-            DecryptHandle(self.0[1]).decompress()?,
+            CompressedCommitment(self.0[0]).decompress()?,
+            CompressedHandle(self.0[1]).decompress()?,
         ))
     }
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Pod, Zeroable, Serialize, Deserialize)]
 #[repr(transparent)]
-pub struct ElGamalPubkey(pub [u8; 32]);
+pub struct CompressedPubkey(pub [u8; 32]);
 
 impl elgamal::ElGamalPubkey {
-    pub fn compress(&self) -> ElGamalPubkey {
-        ElGamalPubkey(self.as_point().compress().to_bytes())
+    pub fn compress(&self) -> CompressedPubkey {
+        CompressedPubkey(self.as_point().compress().to_bytes())
     }
 }
 
-impl ElGamalPubkey {
+impl CompressedPubkey {
     pub fn decompress(&self) -> Result<elgamal::ElGamalPubkey, DecompressionError> {
         Ok(elgamal::ElGamalPubkey::from_point(
             CompressedRistretto(self.0)
@@ -80,15 +80,15 @@ impl ElGamalPubkey {
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Pod, Zeroable, Serialize, Deserialize)]
 #[repr(transparent)]
-pub struct DecryptHandle(pub [u8; 32]);
+pub struct CompressedHandle(pub [u8; 32]);
 
 impl elgamal::DecryptHandle {
-    pub fn compress(&self) -> DecryptHandle {
-        DecryptHandle(self.as_point().compress().to_bytes())
+    pub fn compress(&self) -> CompressedHandle {
+        CompressedHandle(self.as_point().compress().to_bytes())
     }
 }
 
-impl DecryptHandle {
+impl CompressedHandle {
     pub fn decompress(&self) -> Result<elgamal::DecryptHandle, DecompressionError> {
         Ok(elgamal::DecryptHandle::from_point(
             CompressedRistretto(self.0)
