@@ -1,4 +1,4 @@
-use std::ops::{Add, Sub};
+use std::ops::{Add, Sub, AddAssign, SubAssign};
 
 use curve25519_dalek::{
     constants::{RISTRETTO_BASEPOINT_COMPRESSED, RISTRETTO_BASEPOINT_POINT as G},
@@ -206,12 +206,32 @@ impl Add for &DecryptHandle {
     }
 }
 
+impl Sub for &DecryptHandle {
+    type Output = DecryptHandle;
+    fn sub(self, o: Self) -> Self::Output {
+        DecryptHandle(self.as_point() - o.as_point())
+    }
+}
+
+make_add_variants!(DecryptHandle, DecryptHandle, Output = DecryptHandle);
+make_sub_variants!(DecryptHandle, DecryptHandle, Output = DecryptHandle);
+
 impl Add for &PedersenCommitment {
     type Output = PedersenCommitment;
     fn add(self, o: Self) -> Self::Output {
         PedersenCommitment(self.as_point() + o.as_point())
     }
 }
+
+impl Sub for &PedersenCommitment {
+    type Output = PedersenCommitment;
+    fn sub(self, o: Self) -> Self::Output {
+        PedersenCommitment(self.as_point() - o.as_point())
+    }
+}
+
+make_add_variants!(PedersenCommitment, PedersenCommitment, Output = PedersenCommitment);
+make_sub_variants!(PedersenCommitment, PedersenCommitment, Output = PedersenCommitment);
 
 impl Add for &ElGamalCiphertext {
     type Output = ElGamalCiphertext;
@@ -223,20 +243,6 @@ impl Add for &ElGamalCiphertext {
     }
 }
 
-impl Sub for &DecryptHandle {
-    type Output = DecryptHandle;
-    fn sub(self, o: Self) -> Self::Output {
-        DecryptHandle(self.as_point() - o.as_point())
-    }
-}
-
-impl Sub for &PedersenCommitment {
-    type Output = PedersenCommitment;
-    fn sub(self, o: Self) -> Self::Output {
-        PedersenCommitment(self.as_point() - o.as_point())
-    }
-}
-
 impl Sub for &ElGamalCiphertext {
     type Output = ElGamalCiphertext;
     fn sub(self, o: Self) -> Self::Output {
@@ -244,5 +250,61 @@ impl Sub for &ElGamalCiphertext {
             commitment: &self.commitment - &o.commitment,
             handle: &self.handle - &o.handle,
         }
+    }
+}
+
+make_add_variants!(ElGamalCiphertext, ElGamalCiphertext, Output = ElGamalCiphertext);
+make_sub_variants!(ElGamalCiphertext, ElGamalCiphertext, Output = ElGamalCiphertext);
+
+// ElGamalCiphertext + Scalar is equivalent to committing the scalar to a 0 opening (non-hiding)
+// and performing the usual addition using that
+
+impl Add<&Scalar> for &ElGamalCiphertext {
+    type Output = ElGamalCiphertext;
+    fn add(self, o: &Scalar) -> Self::Output {
+        ElGamalCiphertext {
+            commitment: PedersenCommitment::from_point(self.commitment.as_point() + &(&G * o)),
+            handle: self.handle.clone(),
+        }
+    }
+}
+
+impl Sub<&Scalar> for &ElGamalCiphertext {
+    type Output = ElGamalCiphertext;
+    fn sub(self, o: &Scalar) -> Self::Output {
+        ElGamalCiphertext {
+            commitment: PedersenCommitment::from_point(self.commitment.as_point() - &(&G * o)),
+            handle: self.handle.clone(),
+        }
+    }
+}
+
+make_add_variants!(ElGamalCiphertext, Scalar, Output = ElGamalCiphertext);
+make_sub_variants!(ElGamalCiphertext, Scalar, Output = ElGamalCiphertext);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_homomorphic_ct_scalar() {
+        let keypair = ElGamalKeypair::keygen();
+
+        let ct = keypair.pubkey().encrypt(60u64);
+
+        assert_eq!(
+            *keypair
+                .secret()
+                .decrypt(&(&ct + &Scalar::from(15u64)))
+                .as_point(),
+            &Scalar::from(75u64) * &G
+        );
+        assert_eq!(
+            *keypair
+                .secret()
+                .decrypt(&(&ct - &Scalar::from(15u64)))
+                .as_point(),
+            &Scalar::from(45u64) * &G
+        );
     }
 }

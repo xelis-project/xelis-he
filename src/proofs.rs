@@ -22,7 +22,8 @@ lazy_static! {
 
 /// Proof that a commitment and ciphertext are equal.
 #[allow(non_snake_case)]
-struct CommitmentEqProof {
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct CommitmentEqProof {
     Y_0: CompressedRistretto,
     Y_1: CompressedRistretto,
     Y_2: CompressedRistretto,
@@ -88,6 +89,7 @@ impl CommitmentEqProof {
             z_r,
         }
     }
+
     pub fn verify(
         &self,
         source_pubkey: &ElGamalPubkey,
@@ -167,7 +169,8 @@ impl CommitmentEqProof {
 }
 
 #[allow(non_snake_case)]
-struct CiphertextValidityProof {
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct CiphertextValidityProof {
     Y_0: CompressedRistretto,
     Y_1: CompressedRistretto,
     z_r: Scalar,

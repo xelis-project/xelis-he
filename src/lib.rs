@@ -1,18 +1,25 @@
-use compressed::DecompressionError;
-use elgamal::{ECDLPInstance, ElGamalCiphertext, ElGamalSecretKey};
 use thiserror::Error;
-use transcript::TranscriptError;
 
-pub mod compressed;
-pub mod elgamal;
-mod proofs;
+#[macro_use]
+pub(crate) mod macros;
+
+mod compressed;
+mod elgamal;
+pub(crate) mod proofs;
 mod transcript;
+mod tx;
 
-pub use proofs::Transfer;
+pub use compressed::{DecompressionError, ElGamalCiphertext, ElGamalPubkey};
+pub use transcript::TranscriptError;
+pub use elgamal::{
+    ECDLPInstance, ElGamalKeypair as Keypair, ElGamalPubkey as Pubkey,
+    ElGamalSecretKey as SecretKey,
+};
+pub use tx::{Transaction, TransactionType, Transfer};
 
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
 pub enum TransferProofGenerationError {
-    #[error("not enough money in the account")]
+    #[error("not enough funds in the account")]
     InsufficientFunds,
     #[error("range proof generation failed: {0}")]
     RangeProof(#[from] bulletproofs::ProofError),
@@ -76,7 +83,7 @@ impl Transfer {
     }
 
     /// Note: this function returns an `ECDLPInstance` object, which you will need to decode.
-    pub fn decrypt_amount(&self, sk: &ElGamalSecretKey, role: Role) -> ECDLPInstance {
+    pub fn decrypt_amount(&self, sk: &SecretKey, role: Role) -> ECDLPInstance {
         sk.decrypt(&self.get_ciphertext(role))
     }
 }
