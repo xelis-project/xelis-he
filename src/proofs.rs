@@ -1,7 +1,5 @@
-use crate::{
-    compressed, elgamal::*, transcript::ProtocolTranscript, CompressedCiphertext, CompressedPubkey, ProofGenerationError, ProofVerificationError
-};
-use bulletproofs::{BulletproofGens, PedersenGens, RangeProof};
+use crate::{elgamal::{DecryptHandle, ElGamalCiphertext, PedersenCommitment, PedersenOpening, H}, transcript::ProtocolTranscript, ElGamalKeypair, ElGamalPubkey, ProofVerificationError};
+use bulletproofs::{BulletproofGens, PedersenGens};
 use curve25519_dalek::{
     constants::RISTRETTO_BASEPOINT_POINT as G,
     ristretto::{CompressedRistretto, RistrettoPoint},
@@ -134,7 +132,7 @@ impl CommitmentEqProof {
             vec![
                 &self.z_s,           // z_s
                 &(-&c),              // -c
-                &(-&Scalar::ONE),  // -identity
+                &(-&Scalar::ONE),    // -identity
                 &(&w * &self.z_x),   // w * z_x
                 &(&w * &self.z_s),   // w * z_s
                 &(&w_negated * &c),  // -w * c
@@ -251,7 +249,7 @@ impl CiphertextValidityProof {
                 &self.z_r,          // z_r
                 &self.z_x,          // z_x
                 &(-&c),             // -c
-                &-(&Scalar::ONE), // -identity
+                &-(&Scalar::ONE),   // -identity
                 &(&w * &self.z_r),  // w * z_r
                 &(&w_negated * &c), // -w * c
                 &w_negated,         // -w

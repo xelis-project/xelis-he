@@ -26,6 +26,7 @@ pub trait ProtocolTranscript {
     ) -> Result<(), TranscriptError>;
 
     fn equality_proof_domain_separator(&mut self);
+    fn transfer_proof_domain_separator(&mut self);
     fn ciphertext_validity_proof_domain_separator(&mut self);
 }
 
@@ -76,11 +77,15 @@ impl ProtocolTranscript for Transcript {
 
     // domain separators
 
+    fn transfer_proof_domain_separator(&mut self) {
+        self.append_message(b"dom-sep", b"transfer-proof");
+    }
+
     fn equality_proof_domain_separator(&mut self) {
-        self.append_message(b"dom-sep", b"Eq");
+        self.append_message(b"dom-sep", b"equality-proof");
     }
 
     fn ciphertext_validity_proof_domain_separator(&mut self) {
-        self.append_message(b"dom-sep", b"Validity");
+        self.append_message(b"dom-sep", b"validity-proof");
     }
 }

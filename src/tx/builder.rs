@@ -9,6 +9,7 @@ use std::{iter, mem};
 use crate::{
     elgamal::{DecryptHandle, ElGamalCiphertext, PedersenCommitment, PedersenOpening},
     proofs::{CiphertextValidityProof, CommitmentEqProof, BP_GENS, PC_GENS},
+    transcript::ProtocolTranscript,
     CompressedCiphertext, CompressedPubkey, DecompressionError, ElGamalKeypair, ElGamalPubkey,
     ProofGenerationError, Transaction, TransactionType, Transfer,
 };
@@ -37,7 +38,7 @@ pub struct SmartContractCallBuilder {
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct TransferBuilder {
     // pub asset: Hash,
-    pub to: CompressedPubkey,
+    pub dest_pubkey: CompressedPubkey,
     pub amount: u64,
     // pub extra_data: Option<Vec<u8>>, // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
 }
@@ -106,7 +107,7 @@ impl TransactionBuilder {
                 let transfers = transfers
                     .into_iter()
                     .map(|transfer| {
-                        let dest_pubkey = transfer.to.decompress()?;
+                        let dest_pubkey = transfer.dest_pubkey.decompress()?;
 
                         let amount_opening = PedersenOpening::generate_new();
                         let amount_commitment =
@@ -193,6 +194,12 @@ impl TransactionBuilder {
                 transfers
                     .into_iter()
                     .map(|transfer| {
+                        let amount_commitment = transfer.amount_commitment.compress();
+
+                        transcript.transfer_proof_domain_separator();
+                        transcript.append_pubkey(b"dest_pubkey", &transfer.inner.dest_pubkey);
+                        transcript.append_commitment(b"amount_commitment", &amount_commitment);
+
                         let ct_validity_proof = CiphertextValidityProof::new(
                             &transfer.dest_pubkey,
                             transfer.inner.amount,
@@ -201,8 +208,8 @@ impl TransactionBuilder {
                         );
 
                         Ok(Transfer {
-                            to: transfer.inner.to,
-                            amount_commitment: transfer.amount_commitment.compress(),
+                            dest_pubkey: transfer.inner.dest_pubkey,
+                            amount_commitment,
                             amount_sender_handle: transfer.amount_sender_handle.compress(),
                             amount_receiver_handle: transfer.amount_receiver_handle.compress(),
                             ct_validity_proof,

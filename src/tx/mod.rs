@@ -43,7 +43,7 @@ pub trait BlockchainVerificationState {
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Transfer {
     // pub asset: Hash,
-    pub to: CompressedPubkey,
+    pub dest_pubkey: CompressedPubkey,
     // pub extra_data: Option<Vec<u8>>, // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
     /// Represents the ciphertext along with `amount_sender_handle` and `amount_receiver_handle`.
     /// The opening is reused for both of the sender and receiver commitments.
@@ -170,7 +170,14 @@ impl Transaction {
         let new_ct = self.get_sender_new_balance_ct(&source_current_ciphertext)?;
         let new_source_commitment = self.new_source_commitment.decompress()?;
 
-        println!("verify {:?}", (&owner.compress(), &new_ct.compress(), &new_source_commitment.compress(),));
+        println!(
+            "verify {:?}",
+            (
+                &owner.compress(),
+                &new_ct.compress(),
+                &new_source_commitment.compress(),
+            )
+        );
 
         self.new_commitment_eq_proof.verify(
             &owner,
@@ -185,7 +192,11 @@ impl Transaction {
                 let amount_commitment = transfer.amount_commitment.decompress()?;
                 let amount_receiver_handle = transfer.amount_receiver_handle.decompress()?;
 
-                let receiver = transfer.to.decompress()?;
+                transcript.transfer_proof_domain_separator();
+                transcript.append_pubkey(b"dest_pubkey", &transfer.dest_pubkey);
+                transcript.append_commitment(b"amount_commitment", &transfer.amount_commitment);
+
+                let receiver = transfer.dest_pubkey.decompress()?;
 
                 transfer.ct_validity_proof.verify(
                     &amount_commitment,

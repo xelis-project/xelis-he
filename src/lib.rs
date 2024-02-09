@@ -121,7 +121,7 @@ mod tests {
             version: 1,
             owner: bob.keypair.pubkey().compress(),
             data: TransactionTypeBuilder::Transfer(vec![TransferBuilder {
-                to: alice.keypair.pubkey().compress(),
+                dest_pubkey: alice.keypair.pubkey().compress(),
                 amount: 52,
             }]),
             fee: 1,
