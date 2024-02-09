@@ -84,8 +84,6 @@ impl TransactionBuilder {
             .checked_sub(cost)
             .ok_or(ProofGenerationError::InsufficientFunds)?;
 
-        println!("cost {cost:?}");
-
         let source_current_ciphertext = source_current_ciphertext.decompress()?;
 
         // 0.a Create the commitments
@@ -149,7 +147,8 @@ impl TransactionBuilder {
         // We can't just do `source_current_ciphertext - Scalar::from(cost)`, as we need the pedersen openings to
         // match up with the transfer amounts.
 
-        let (new_source_commitment, source_opening) = PedersenCommitment::new(source_new_balance);
+        let new_source_commitment =
+            PedersenCommitment::new_with_opening(source_new_balance, &new_source_opening);
         let new_source_commitment_pod = new_source_commitment.compress();
 
         let mut new_source_ciphertext = source_current_ciphertext - Scalar::from(self.fee);
@@ -183,7 +182,7 @@ impl TransactionBuilder {
         let new_commitment_eq_proof = CommitmentEqProof::new(
             &source_keypair,
             &new_source_ciphertext,
-            &source_opening,
+            &new_source_opening,
             source_new_balance,
             &mut transcript,
         );
@@ -202,7 +201,8 @@ impl TransactionBuilder {
                         transcript.append_pubkey(b"dest_pubkey", &transfer.inner.dest_pubkey);
                         transcript.append_commitment(b"amount_commitment", &amount_commitment);
                         transcript.append_handle(b"amount_sender_handle", &amount_sender_handle);
-                        transcript.append_handle(b"amount_receiver_handle", &amount_receiver_handle);
+                        transcript
+                            .append_handle(b"amount_receiver_handle", &amount_receiver_handle);
 
                         let ct_validity_proof = CiphertextValidityProof::new(
                             &transfer.dest_pubkey,

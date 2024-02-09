@@ -112,7 +112,6 @@ impl Transaction {
         &self,
         source_current_balance: &ElGamalCiphertext,
     ) -> Result<ElGamalCiphertext, DecompressionError> {
-        println!("bal => {:?}", source_current_balance.compress());
         let mut bal = source_current_balance - Scalar::from(self.fee);
         match &self.data {
             TransactionType::Transfer(transfers) => {
@@ -169,15 +168,6 @@ impl Transaction {
         let source_current_ciphertext = source_current_ciphertext.decompress()?;
         let new_ct = self.get_sender_new_balance_ct(&source_current_ciphertext)?;
         let new_source_commitment = self.new_source_commitment.decompress()?;
-
-        println!(
-            "verify {:?}",
-            (
-                &owner.compress(),
-                &new_ct.compress(),
-                &new_source_commitment.compress(),
-            )
-        );
 
         self.new_commitment_eq_proof.verify(
             &owner,
