@@ -195,10 +195,14 @@ impl TransactionBuilder {
                     .into_iter()
                     .map(|transfer| {
                         let amount_commitment = transfer.amount_commitment.compress();
+                        let amount_sender_handle = transfer.amount_sender_handle.compress();
+                        let amount_receiver_handle = transfer.amount_receiver_handle.compress();
 
                         transcript.transfer_proof_domain_separator();
                         transcript.append_pubkey(b"dest_pubkey", &transfer.inner.dest_pubkey);
                         transcript.append_commitment(b"amount_commitment", &amount_commitment);
+                        transcript.append_handle(b"amount_sender_handle", &amount_sender_handle);
+                        transcript.append_handle(b"amount_receiver_handle", &amount_receiver_handle);
 
                         let ct_validity_proof = CiphertextValidityProof::new(
                             &transfer.dest_pubkey,
@@ -210,8 +214,8 @@ impl TransactionBuilder {
                         Ok(Transfer {
                             dest_pubkey: transfer.inner.dest_pubkey,
                             amount_commitment,
-                            amount_sender_handle: transfer.amount_sender_handle.compress(),
-                            amount_receiver_handle: transfer.amount_receiver_handle.compress(),
+                            amount_sender_handle,
+                            amount_receiver_handle,
                             ct_validity_proof,
                         })
                     })

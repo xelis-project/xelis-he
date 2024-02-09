@@ -195,6 +195,9 @@ impl Transaction {
                 transcript.transfer_proof_domain_separator();
                 transcript.append_pubkey(b"dest_pubkey", &transfer.dest_pubkey);
                 transcript.append_commitment(b"amount_commitment", &transfer.amount_commitment);
+                transcript.append_handle(b"amount_sender_handle", &transfer.amount_sender_handle);
+                transcript
+                    .append_handle(b"amount_receiver_handle", &transfer.amount_receiver_handle);
 
                 let receiver = transfer.dest_pubkey.decompress()?;
 
