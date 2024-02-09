@@ -1,5 +1,5 @@
 use bulletproofs::RangeProof;
-use curve25519_dalek::{ristretto::CompressedRistretto, Scalar};
+use curve25519_dalek::{ristretto::CompressedRistretto, traits::Identity, Scalar};
 use merlin::Transcript;
 use std::iter;
 use thiserror::Error;
@@ -96,7 +96,7 @@ pub enum TransactionType {
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Transaction {
     version: u8,
-    owner: CompressedPubkey,
+    source: CompressedPubkey,
     data: TransactionType,
     fee: u64,
     nonce: u64,
@@ -147,15 +147,21 @@ impl Transaction {
 
     // internal, does not verify the range proof
     // returns (transcript, commitments for range proof, new source ct)
-    fn pre_verify(
+    fn pre_verify<B: BlockchainVerificationState>(
         &self,
-        source_current_ciphertext: &CompressedCiphertext,
-    ) -> Result<(Transcript, Vec<CompressedRistretto>, CompressedCiphertext), ProofVerificationError>
-    {
-        let owner = self.owner.decompress()?;
+        state: &mut B,
+    ) -> Result<(Transcript, Vec<CompressedRistretto>), VerificationError<B::Error>> {
+        let source_current_ciphertext = state
+            .get_account_balance(&self.source)
+            .map_err(VerificationError::State)?;
+
+        let owner = self
+            .source
+            .decompress()
+            .map_err(|err| VerificationError::Proof(err.into()))?;
         let mut transcript = Self::prepare_transcript(
             self.version,
-            &self.owner,
+            &self.source,
             self.fee,
             self.nonce,
             &self.new_source_commitment,
@@ -165,9 +171,16 @@ impl Transaction {
         // TODO
 
         // 1. Verify CommitmentEqProof
-        let source_current_ciphertext = source_current_ciphertext.decompress()?;
-        let new_ct = self.get_sender_new_balance_ct(&source_current_ciphertext)?;
-        let new_source_commitment = self.new_source_commitment.decompress()?;
+        let source_current_ciphertext = source_current_ciphertext
+            .decompress()
+            .map_err(|err| VerificationError::Proof(err.into()))?;
+        let new_ct = self
+            .get_sender_new_balance_ct(&source_current_ciphertext)
+            .map_err(|err| VerificationError::Proof(err.into()))?;
+        let new_source_commitment = self
+            .new_source_commitment
+            .decompress()
+            .map_err(|err| VerificationError::Proof(err.into()))?;
 
         self.new_commitment_eq_proof.verify(
             &owner,
@@ -179,8 +192,39 @@ impl Transaction {
         // 2. Verify every CtValidityProof
         if let TransactionType::Transfer(transfers) = &self.data {
             for transfer in transfers {
-                let amount_commitment = transfer.amount_commitment.decompress()?;
-                let amount_receiver_handle = transfer.amount_receiver_handle.decompress()?;
+                let amount_commitment = transfer
+                    .amount_commitment
+                    .decompress()
+                    .map_err(|err| VerificationError::Proof(err.into()))?;
+                let amount_receiver_handle = transfer
+                    .amount_receiver_handle
+                    .decompress()
+                    .map_err(|err| VerificationError::Proof(err.into()))?;
+
+                let receiver = transfer
+                    .dest_pubkey
+                    .decompress()
+                    .map_err(|err| VerificationError::Proof(err.into()))?;
+
+                // Update receiver balance
+
+                let current_balance = state
+                    .get_account_balance(&transfer.dest_pubkey)
+                    .map_err(VerificationError::State)?
+                    .decompress()
+                    .map_err(|err| VerificationError::Proof(err.into()))?;
+
+                let receiver_ct = ElGamalCiphertext::new(
+                    amount_commitment.clone(),
+                    amount_receiver_handle.clone(),
+                );
+                let receiver_new_balance = current_balance + receiver_ct;
+
+                state
+                    .update_account_balance(&transfer.dest_pubkey, receiver_new_balance.compress())
+                    .map_err(VerificationError::State)?;
+
+                // Validity proof
 
                 transcript.transfer_proof_domain_separator();
                 transcript.append_pubkey(b"dest_pubkey", &transfer.dest_pubkey);
@@ -188,8 +232,6 @@ impl Transaction {
                 transcript.append_handle(b"amount_sender_handle", &transfer.amount_sender_handle);
                 transcript
                     .append_handle(b"amount_receiver_handle", &transfer.amount_receiver_handle);
-
-                let receiver = transfer.dest_pubkey.decompress()?;
 
                 transfer.ct_validity_proof.verify(
                     &amount_commitment,
@@ -202,12 +244,19 @@ impl Transaction {
 
         // 3. Verify the aggregated RangeProof
         let value_commitments: Vec<_> = if let TransactionType::Transfer(transfers) = &self.data {
+            // Create fake commitments to make `m` (party size) of the bulletproof a power of two.
+            let n_dud_commitments = (transfers.len() + 1)
+                .checked_next_power_of_two()
+                .ok_or(ProofVerificationError::Format)?
+                - (transfers.len() + 1);
+
             iter::once(self.new_source_commitment.as_point())
                 .chain(
                     transfers
                         .iter()
                         .map(|transfer| transfer.amount_commitment.as_point()),
                 )
+                .chain(iter::repeat(CompressedRistretto::identity()).take(n_dud_commitments))
                 .collect()
         } else {
             vec![self.new_source_commitment.as_point()]
@@ -215,26 +264,22 @@ impl Transaction {
 
         // range proof will be verified in batch by caller
 
-        Ok((transcript, value_commitments, new_ct.compress()))
+        // Update source balance
+        state
+            .update_account_balance(&self.source, new_ct.compress())
+            .map_err(VerificationError::State)?;
+
+        Ok((transcript, value_commitments))
     }
 
     pub fn verify_batch<B: BlockchainVerificationState>(
-        state: &mut B,
         txs: &[Transaction],
+        state: &mut B,
     ) -> Result<(), VerificationError<B::Error>> {
         let mut prepared = txs
             .iter()
             .map(|tx| {
-                let current_ciphertext = state
-                    .get_account_balance(&tx.owner)
-                    .map_err(VerificationError::State)?;
-
-                let (transcript, commitments, new_ciphertext) =
-                    tx.pre_verify(&current_ciphertext)?;
-
-                state
-                    .update_account_balance(&tx.owner, new_ciphertext)
-                    .map_err(VerificationError::State)?;
+                let (transcript, commitments) = tx.pre_verify(state)?;
                 Ok((transcript, commitments))
             })
             .collect::<Result<Vec<_>, VerificationError<B::Error>>>()?;
@@ -250,6 +295,60 @@ impl Transaction {
             &PC_GENS,
         )
         .map_err(ProofVerificationError::from)?;
+
+        Ok(())
+    }
+
+    /// Verify one transaction. Use `verify_batch` to verify a batch of transactions.
+    pub fn verify<B: BlockchainVerificationState>(
+        &self,
+        state: &mut B,
+    ) -> Result<(), VerificationError<B::Error>> {
+        let (mut transcript, commitments) = self.pre_verify(state)?;
+
+        RangeProof::verify_multiple(
+            &self.range_proof,
+            &BP_GENS,
+            &PC_GENS,
+            &mut transcript,
+            &commitments,
+            64,
+        )
+        .map_err(ProofVerificationError::from)?;
+
+        Ok(())
+    }
+
+    /// Assume the tx is valid, apply it to `state`. May panic if a ciphertext is ill-formed.
+    pub fn apply_without_verify<B: BlockchainVerificationState>(
+        &self,
+        state: &mut B,
+    ) -> Result<(), B::Error> {
+        let current_bal = state
+            .get_account_balance(&self.source)?
+            .decompress()
+            .expect("ill-formed ciphertext");
+        self.get_sender_new_balance_ct(&current_bal)
+            .expect("ill-formed ciphertext");
+
+        if let TransactionType::Transfer(transfers) = &self.data {
+            for transfer in transfers {
+                let current_bal = state
+                    .get_account_balance(&transfer.dest_pubkey)?
+                    .decompress()
+                    .expect("ill-formed ciphertext");
+
+                let receiver_ct = transfer
+                    .get_ciphertext(Role::Receiver)
+                    .decompress()
+                    .expect("ill-formed ciphertext");
+
+                let receiver_new_balance = current_bal + receiver_ct;
+
+                state
+                    .update_account_balance(&transfer.dest_pubkey, receiver_new_balance.compress())?;
+            }
+        }
 
         Ok(())
     }

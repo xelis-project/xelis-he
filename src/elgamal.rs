@@ -1,6 +1,6 @@
 //! Twisted ElGamal implementation.
 
-use std::ops::{Add, Sub, AddAssign, SubAssign};
+use std::ops::{Add, AddAssign, Sub, SubAssign};
 
 use curve25519_dalek::{
     constants::{RISTRETTO_BASEPOINT_COMPRESSED, RISTRETTO_BASEPOINT_POINT as G},
@@ -233,8 +233,16 @@ impl Sub for &PedersenCommitment {
     }
 }
 
-make_add_variants!(PedersenCommitment, PedersenCommitment, Output = PedersenCommitment);
-make_sub_variants!(PedersenCommitment, PedersenCommitment, Output = PedersenCommitment);
+make_add_variants!(
+    PedersenCommitment,
+    PedersenCommitment,
+    Output = PedersenCommitment
+);
+make_sub_variants!(
+    PedersenCommitment,
+    PedersenCommitment,
+    Output = PedersenCommitment
+);
 
 impl Add for &ElGamalCiphertext {
     type Output = ElGamalCiphertext;
@@ -256,8 +264,16 @@ impl Sub for &ElGamalCiphertext {
     }
 }
 
-make_add_variants!(ElGamalCiphertext, ElGamalCiphertext, Output = ElGamalCiphertext);
-make_sub_variants!(ElGamalCiphertext, ElGamalCiphertext, Output = ElGamalCiphertext);
+make_add_variants!(
+    ElGamalCiphertext,
+    ElGamalCiphertext,
+    Output = ElGamalCiphertext
+);
+make_sub_variants!(
+    ElGamalCiphertext,
+    ElGamalCiphertext,
+    Output = ElGamalCiphertext
+);
 
 // ElGamalCiphertext + Scalar is equivalent to committing the scalar to a 0 opening (non-hiding)
 // and performing the usual addition using that
@@ -287,6 +303,8 @@ make_sub_variants!(ElGamalCiphertext, Scalar, Output = ElGamalCiphertext);
 
 #[cfg(test)]
 mod tests {
+    use curve25519_dalek::traits::Identity;
+
     use super::*;
 
     #[test]
@@ -308,6 +326,14 @@ mod tests {
                 .decrypt(&(&ct - &Scalar::from(15u64)))
                 .as_point(),
             &Scalar::from(45u64) * &G
+        );
+    }
+
+    #[test]
+    fn test_dud_commitment() {
+        assert_eq!(
+            PedersenCommitment::new_with_opening(Scalar::ZERO, &PedersenOpening::from_scalar(Scalar::ZERO)),
+            PedersenCommitment::from_point(RistrettoPoint::identity())
         );
     }
 }

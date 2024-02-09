@@ -55,21 +55,21 @@ pub struct TransactionBuilder {
 impl TransactionBuilder {
     /// Compute the full cost of the transaction
     pub fn get_transaction_cost(&self) -> u64 {
-        let mut bal = self.fee;
+        let mut cost = self.fee;
         match &self.data {
             TransactionTypeBuilder::Transfer(transfers) => {
                 for transfer in transfers {
-                    bal += transfer.amount;
+                    cost += transfer.amount;
                 }
             }
-            TransactionTypeBuilder::Burn { amount, .. } => bal += amount,
+            TransactionTypeBuilder::Burn { amount, .. } => cost += amount,
             TransactionTypeBuilder::CallContract(SmartContractCallBuilder { amount }) => {
-                bal += amount
+                cost += amount
             }
             TransactionTypeBuilder::DeployContract(_) => todo!(),
         }
 
-        bal
+        cost
     }
 
     /// Returns (transaction, new_source_balance_ciphertext, new_source_balance).
@@ -125,11 +125,17 @@ impl TransactionBuilder {
                     })
                     .collect::<Result<Vec<_>, DecompressionError>>()?;
 
-                let (commitments, openings) =
+                // Create fake commitments to make `m` (party size) of the bulletproof a power of two.
+                let n_dud_commitments = (transfers.len() + 1)
+                    .checked_next_power_of_two()
+                    .ok_or(ProofGenerationError::Format)? - (transfers.len() + 1);
+
+                let (commitments, openings): (Vec<_>, Vec<_>) =
                     iter::once((source_new_balance, new_source_opening.as_scalar()))
                         .chain(transfers.iter().map(|transfer| {
                             (transfer.inner.amount, transfer.amount_opening.as_scalar())
                         }))
+                        .chain(iter::repeat((0u64, Scalar::ZERO)).take(n_dud_commitments))
                         .unzip();
 
                 (transfers, commitments, openings)
@@ -242,7 +248,7 @@ impl TransactionBuilder {
         Ok((
             Transaction {
                 version: self.version,
-                owner: self.owner,
+                source: self.owner,
                 data,
                 fee: self.fee,
                 nonce: self.nonce,
