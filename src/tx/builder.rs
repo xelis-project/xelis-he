@@ -4,13 +4,13 @@
 
 use bulletproofs::RangeProof;
 use curve25519_dalek::Scalar;
-use std::iter;
+use std::{iter, mem};
 
 use crate::{
-    elgamal::{PedersenCommitment, PedersenOpening},
+    elgamal::{DecryptHandle, ElGamalCiphertext, PedersenCommitment, PedersenOpening},
     proofs::{CiphertextValidityProof, CommitmentEqProof, BP_GENS, PC_GENS},
-    CompressedCiphertext, CompressedPubkey, ElGamalKeypair, ProofGenerationError, Transaction,
-    TransactionType, Transfer,
+    CompressedCiphertext, CompressedPubkey, DecompressionError, ElGamalKeypair, ElGamalPubkey,
+    ProofGenerationError, Transaction, TransactionType, Transfer,
 };
 
 use super::SmartContractCall;
@@ -72,8 +72,8 @@ impl TransactionBuilder {
     }
 
     /// Returns (transaction, new_source_balance_ciphertext, new_source_balance).
-    fn build(
-        self,
+    pub fn build(
+        mut self,
         source_keypair: &ElGamalKeypair,
         source_current_balance: u64,
         source_current_ciphertext: &CompressedCiphertext,
@@ -83,13 +83,92 @@ impl TransactionBuilder {
             .checked_sub(cost)
             .ok_or(ProofGenerationError::InsufficientFunds)?;
 
+        println!("cost {cost:?}");
+
         let source_current_ciphertext = source_current_ciphertext.decompress()?;
 
-        let new_source_ciphertext = source_current_ciphertext - Scalar::from(cost);
+        // 0.a Create the commitments
 
-        // make a new comitment for the remaining balance in source
+        struct TransferWithCommitment {
+            inner: TransferBuilder,
+            amount_commitment: PedersenCommitment,
+            amount_sender_handle: DecryptHandle,
+            amount_receiver_handle: DecryptHandle,
+            dest_pubkey: ElGamalPubkey,
+            amount_opening: PedersenOpening,
+        }
+
+        let new_source_opening = PedersenOpening::generate_new();
+
+        let (transfers, commitments, openings) =
+            if let TransactionTypeBuilder::Transfer(transfers) = &mut self.data {
+                let transfers = mem::take(transfers);
+                let transfers = transfers
+                    .into_iter()
+                    .map(|transfer| {
+                        let dest_pubkey = transfer.to.decompress()?;
+
+                        let amount_opening = PedersenOpening::generate_new();
+                        let amount_commitment =
+                            PedersenCommitment::new_with_opening(transfer.amount, &amount_opening);
+                        let amount_sender_handle =
+                            source_keypair.pubkey().decrypt_handle(&amount_opening);
+                        let amount_receiver_handle = dest_pubkey.decrypt_handle(&amount_opening);
+
+                        Ok(TransferWithCommitment {
+                            inner: transfer,
+                            amount_commitment,
+                            amount_sender_handle,
+                            amount_receiver_handle,
+                            dest_pubkey,
+                            amount_opening,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, DecompressionError>>()?;
+
+                let (commitments, openings) =
+                    iter::once((source_new_balance, new_source_opening.as_scalar()))
+                        .chain(transfers.iter().map(|transfer| {
+                            (transfer.inner.amount, transfer.amount_opening.as_scalar())
+                        }))
+                        .unzip();
+
+                (transfers, commitments, openings)
+            } else {
+                (
+                    vec![],
+                    vec![source_new_balance],
+                    vec![new_source_opening.as_scalar()],
+                )
+            };
+
+        // 0.b Make a new comitment for the remaining balance in source
+
+        // 0.c Compute the new balance
+        // We can't just do `source_current_ciphertext - Scalar::from(cost)`, as we need the pedersen openings to
+        // match up with the transfer amounts.
+
         let (new_source_commitment, source_opening) = PedersenCommitment::new(source_new_balance);
         let new_source_commitment_pod = new_source_commitment.compress();
+
+        let mut new_source_ciphertext = source_current_ciphertext - Scalar::from(self.fee);
+        match &self.data {
+            TransactionTypeBuilder::Transfer(_) => {
+                for transfer in &transfers {
+                    new_source_ciphertext -= ElGamalCiphertext::new(
+                        transfer.amount_commitment.clone(),
+                        transfer.amount_sender_handle.clone(),
+                    );
+                }
+            }
+            TransactionTypeBuilder::Burn { amount, .. } => {
+                new_source_ciphertext -= Scalar::from(*amount)
+            }
+            TransactionTypeBuilder::CallContract(SmartContractCallBuilder { amount }) => {
+                new_source_ciphertext -= Scalar::from(*amount)
+            }
+            TransactionTypeBuilder::DeployContract(_) => todo!(),
+        }
 
         let mut transcript = Transaction::prepare_transcript(
             self.version,
@@ -108,46 +187,24 @@ impl TransactionBuilder {
             &mut transcript,
         );
 
-        // next step consumes the amounts, so prepare the commitments for range proof beforehand
-        let (commitments, openings) =
-            if let TransactionTypeBuilder::Transfer(transfers) = &self.data {
-                iter::once((source_new_balance, source_opening.as_scalar()))
-                    .chain(transfers.iter().map(|transfer| {
-                        (transfer.amount, PedersenOpening::generate_new().as_scalar())
-                    }))
-                    .unzip()
-            } else {
-                (vec![source_new_balance], vec![source_opening.as_scalar()])
-            };
-
-        // 2. Create the CtValaidityProofs
+        // 2. Create the CtValidityProofs
         let data = match self.data {
-            TransactionTypeBuilder::Transfer(transfers) => TransactionType::Transfer(
+            TransactionTypeBuilder::Transfer(_) => TransactionType::Transfer(
                 transfers
                     .into_iter()
-                    .zip(openings.iter().skip(1))
-                    .map(|(transfer, amount_opening)| {
-                        let dest_pubkey = transfer.to.decompress()?;
-
-                        let amount_opening = PedersenOpening::from_scalar(*amount_opening);
-                        let amount_commitment =
-                            PedersenCommitment::new_with_opening(transfer.amount, &amount_opening);
-                        let amount_sender_handle =
-                            source_keypair.pubkey().decrypt_handle(&amount_opening);
-                        let amount_receiver_handle = dest_pubkey.decrypt_handle(&amount_opening);
-
+                    .map(|transfer| {
                         let ct_validity_proof = CiphertextValidityProof::new(
-                            &dest_pubkey,
-                            transfer.amount,
-                            &amount_opening,
+                            &transfer.dest_pubkey,
+                            transfer.inner.amount,
+                            &transfer.amount_opening,
                             &mut transcript,
                         );
 
                         Ok(Transfer {
-                            to: transfer.to,
-                            amount_commitment: amount_commitment.compress(),
-                            amount_sender_handle: amount_sender_handle.compress(),
-                            amount_receiver_handle: amount_receiver_handle.compress(),
+                            to: transfer.inner.to,
+                            amount_commitment: transfer.amount_commitment.compress(),
+                            amount_sender_handle: transfer.amount_sender_handle.compress(),
+                            amount_receiver_handle: transfer.amount_receiver_handle.compress(),
                             ct_validity_proof,
                         })
                     })

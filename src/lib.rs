@@ -9,12 +9,9 @@ pub(crate) mod proofs;
 mod transcript;
 mod tx;
 
-pub use compressed::{DecompressionError, CompressedCiphertext, CompressedPubkey};
+pub use compressed::{CompressedCiphertext, CompressedPubkey, DecompressionError};
+pub use elgamal::{ECDLPInstance, ElGamalKeypair, ElGamalPubkey, ElGamalSecretKey};
 pub use transcript::TranscriptError;
-pub use elgamal::{
-    ECDLPInstance, ElGamalKeypair, ElGamalPubkey,
-    ElGamalSecretKey,
-};
 pub use tx::{Transaction, TransactionType, Transfer};
 
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
@@ -29,7 +26,7 @@ pub enum ProofGenerationError {
 
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
 pub enum ProofVerificationError {
-    #[error("invalid format")]
+    #[error("invalid format: {0}")]
     Format(#[from] DecompressionError),
     #[error("commitment equality proof verification failed")]
     CommitmentEqProof,
@@ -47,60 +44,94 @@ pub enum Role {
     Receiver,
 }
 
-pub struct ApplyBalancesResult {
-    pub new_source_balance: CompressedCiphertext,
-    pub new_dest_balance: CompressedCiphertext,
-}
-
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use self::tx::{
+        builder::{TransactionBuilder, TransactionTypeBuilder, TransferBuilder},
+        BlockchainVerificationState,
+    };
+
     use super::*;
 
-    // struct Account {
-    //     keypair: elgamal::ElGamalKeypair,
-    //     balance: u64,
-    //     balance_ct: CompressedCiphertext,
-    // }
+    #[derive(Debug)]
+    struct Ledger {
+        accounts: HashMap<CompressedPubkey, Account>,
+    }
 
-    // impl Account {
-    //     fn new(balance: u64) -> Account {
-    //         let keypair = elgamal::ElGamalKeypair::keygen();
+    impl BlockchainVerificationState for Ledger {
+        type Error = ();
 
-    //         Account {
-    //             balance,
-    //             balance_ct: keypair.pubkey().encrypt(balance).compress(),
-    //             keypair,
-    //         }
-    //     }
+        fn get_account_balance(
+            &self,
+            account: &CompressedPubkey,
+        ) -> Result<CompressedCiphertext, Self::Error> {
+            Ok(self.accounts[account].balance_ct)
+        }
 
-    //     fn create_transfer(
-    //         &self,
-    //         other: &Account,
-    //         amount: u64,
-    //     ) -> Result<Transfer, ProofGenerationError> {
-    //         Transfer::new(
-    //             &self.balance_ct,
-    //             self.balance,
-    //             amount,
-    //             &self.keypair,
-    //             &other.keypair.pubkey().compress(),
-    //         )
-    //     }
-    // }
+        fn update_account_balance(
+            &mut self,
+            account: &CompressedPubkey,
+            new_ct: CompressedCiphertext,
+        ) -> Result<(), Self::Error> {
+            self.accounts.get_mut(account).unwrap().balance_ct = new_ct;
+            Ok(())
+        }
+    }
 
-    // #[test]
-    // fn test_1() {
-    //     let bob = Account::new(100);
-    //     let alice = Account::new(0);
+    #[derive(Clone, Debug)]
+    struct Account {
+        keypair: ElGamalKeypair,
+        balance_ct: CompressedCiphertext,
+    }
 
-    //     let transfer = bob.create_transfer(&alice, 5).expect("generate");
+    impl Account {
+        fn new(balance: u64) -> Account {
+            let keypair = ElGamalKeypair::keygen();
 
-    //     transfer
-    //         .verify(
-    //             &bob.keypair.pubkey().compress(),
-    //             &bob.balance_ct,
-    //             &alice.keypair.pubkey().compress(),
-    //         )
-    //         .expect("verify");
-    // }
+            Account {
+                balance_ct: keypair.pubkey().encrypt(balance).compress(),
+                keypair,
+            }
+        }
+    }
+
+    #[test]
+    fn test_1() {
+        let bob = Account::new(100);
+        let alice = Account::new(0);
+        let eve = Account::new(52);
+
+        let mut ledger = Ledger {
+            accounts: [
+                (bob.keypair.pubkey().compress(), bob.clone()),
+                (alice.keypair.pubkey().compress(), alice.clone()),
+                (eve.keypair.pubkey().compress(), eve.clone()),
+            ]
+            .into(),
+        };
+        println!("{:?}", ledger);
+
+        let bob = &ledger.accounts[&bob.keypair.pubkey().compress()];
+        let alice = &ledger.accounts[&alice.keypair.pubkey().compress()];
+        let eve = &ledger.accounts[&eve.keypair.pubkey().compress()];
+
+        let (tx1, _, _) = TransactionBuilder {
+            version: 1,
+            owner: bob.keypair.pubkey().compress(),
+            data: TransactionTypeBuilder::Transfer(vec![TransferBuilder {
+                to: alice.keypair.pubkey().compress(),
+                amount: 52,
+            }]),
+            fee: 1,
+            nonce: 1,
+        }
+        .build(&bob.keypair, 100, &bob.balance_ct)
+        .unwrap();
+
+        Transaction::verify_batch(&mut ledger, &vec![tx1]).unwrap();
+
+        // assert_eq!()
+    }
 }

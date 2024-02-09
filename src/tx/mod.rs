@@ -11,11 +11,11 @@ use crate::{
     elgamal::ElGamalCiphertext,
     proofs::{CiphertextValidityProof, CommitmentEqProof, BP_GENS, PC_GENS},
     transcript::ProtocolTranscript,
-    CompressedCiphertext, CompressedPubkey, ECDLPInstance, ElGamalSecretKey, Role,
-    ProofVerificationError,
+    CompressedCiphertext, CompressedPubkey, ECDLPInstance, ElGamalSecretKey,
+    ProofVerificationError, Role,
 };
 
-#[derive(Error)]
+#[derive(Error, Debug, Clone)]
 pub enum VerificationError<T> {
     State(T),
     Proof(#[from] ProofVerificationError),
@@ -45,6 +45,8 @@ pub struct Transfer {
     // pub asset: Hash,
     pub to: CompressedPubkey,
     // pub extra_data: Option<Vec<u8>>, // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
+    /// Represents the ciphertext along with `amount_sender_handle` and `amount_receiver_handle`.
+    /// The opening is reused for both of the sender and receiver commitments.
     amount_commitment: CompressedCommitment,
     amount_sender_handle: CompressedHandle,
     amount_receiver_handle: CompressedHandle,
@@ -110,6 +112,7 @@ impl Transaction {
         &self,
         source_current_balance: &ElGamalCiphertext,
     ) -> Result<ElGamalCiphertext, DecompressionError> {
+        println!("bal => {:?}", source_current_balance.compress());
         let mut bal = source_current_balance - Scalar::from(self.fee);
         match &self.data {
             TransactionType::Transfer(transfers) => {
@@ -148,10 +151,8 @@ impl Transaction {
     fn pre_verify(
         &self,
         source_current_ciphertext: &CompressedCiphertext,
-    ) -> Result<
-        (Transcript, Vec<CompressedRistretto>, CompressedCiphertext),
-        ProofVerificationError,
-    > {
+    ) -> Result<(Transcript, Vec<CompressedRistretto>, CompressedCiphertext), ProofVerificationError>
+    {
         let owner = self.owner.decompress()?;
         let mut transcript = Self::prepare_transcript(
             self.version,
@@ -168,6 +169,8 @@ impl Transaction {
         let source_current_ciphertext = source_current_ciphertext.decompress()?;
         let new_ct = self.get_sender_new_balance_ct(&source_current_ciphertext)?;
         let new_source_commitment = self.new_source_commitment.decompress()?;
+
+        println!("verify {:?}", (&owner.compress(), &new_ct.compress(), &new_source_commitment.compress(),));
 
         self.new_commitment_eq_proof.verify(
             &owner,
@@ -212,7 +215,7 @@ impl Transaction {
     }
 
     pub fn verify_batch<B: BlockchainVerificationState>(
-        mut state: B,
+        state: &mut B,
         txs: &[Transaction],
     ) -> Result<(), VerificationError<B::Error>> {
         let mut prepared = txs

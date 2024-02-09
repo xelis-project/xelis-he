@@ -1,3 +1,5 @@
+//! Twisted ElGamal implementation.
+
 use std::ops::{Add, Sub, AddAssign, SubAssign};
 
 use curve25519_dalek::{
@@ -30,7 +32,7 @@ impl ECDLPInstance {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ElGamalPubkey(RistrettoPoint);
 
 impl ElGamalPubkey {
@@ -72,7 +74,7 @@ impl ElGamalPubkey {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize, Zeroize)]
+#[derive(Clone, Debug, PartialEq, Eq, Zeroize)]
 pub struct ElGamalSecretKey(Scalar);
 
 impl ElGamalSecretKey {
@@ -87,13 +89,13 @@ impl ElGamalSecretKey {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ElGamalKeypair {
     pk: ElGamalPubkey,
     sk: ElGamalSecretKey,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ElGamalCiphertext {
     commitment: PedersenCommitment,
     handle: DecryptHandle,
@@ -157,6 +159,7 @@ impl DecryptHandle {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PedersenOpening(Scalar);
 impl PedersenOpening {
     pub fn from_scalar(scalar: Scalar) -> Self {
@@ -171,7 +174,7 @@ impl PedersenOpening {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PedersenCommitment(RistrettoPoint);
 impl PedersenCommitment {
     pub fn from_point(point: RistrettoPoint) -> Self {

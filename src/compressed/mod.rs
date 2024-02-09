@@ -4,12 +4,14 @@ use curve25519_dalek::ristretto::CompressedRistretto;
 use serde_derive::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Pod, Zeroable, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Default, PartialEq, Eq, Debug, Pod, Zeroable, Serialize, Deserialize, Hash,
+)]
 #[repr(transparent)]
 pub struct CompressedCommitment(pub [u8; 32]);
 
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
-#[error("invalid format")]
+#[error("point decompression failed")]
 pub struct DecompressionError;
 
 impl elgamal::PedersenCommitment {
@@ -32,7 +34,9 @@ impl CompressedCommitment {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Pod, Zeroable, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Default, PartialEq, Eq, Debug, Pod, Zeroable, Serialize, Deserialize, Hash,
+)]
 #[repr(transparent)]
 pub struct CompressedCiphertext(pub [[u8; 32]; 2]);
 
@@ -58,7 +62,9 @@ impl CompressedCiphertext {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Pod, Zeroable, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Default, PartialEq, Eq, Debug, Pod, Zeroable, Serialize, Deserialize, Hash,
+)]
 #[repr(transparent)]
 pub struct CompressedPubkey(pub [u8; 32]);
 
@@ -78,7 +84,9 @@ impl CompressedPubkey {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Pod, Zeroable, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Default, PartialEq, Eq, Debug, Pod, Zeroable, Serialize, Deserialize, Hash,
+)]
 #[repr(transparent)]
 pub struct CompressedHandle(pub [u8; 32]);
 
