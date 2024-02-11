@@ -118,6 +118,35 @@ mod tests {
     }
 
     #[test]
+    fn test_burn() {
+        let alice = Account::new(100);
+        let mut ledger = Ledger {
+            accounts: [(alice.keypair.pubkey().compress(), alice.clone())].into(),
+        };
+
+        let (tx, _, _) = {
+            let builder = TransactionBuilder {
+                version: 1,
+                owner: alice.keypair.pubkey().compress(),
+                data: TransactionTypeBuilder::Burn { amount: 100 },
+                fee: 0,
+                nonce: 1,
+            };
+            assert_eq!(100, builder.get_transaction_cost());
+
+            builder
+                .build(
+                    &ledger.get_account(&alice.keypair.pubkey().compress()).keypair,
+                    100,
+                    &ledger.get_account_balance(&alice.keypair.pubkey().compress()).unwrap(),
+                )
+                .unwrap()
+        };
+
+        tx.verify(&mut ledger).unwrap();
+    }
+
+    #[test]
     fn test_hundred_batching() {
         const N: usize = 100;
         let mut ledger = Ledger {
@@ -144,7 +173,7 @@ mod tests {
                 let selected_receiver = ledger.accounts.keys().nth((i + 1) % N).unwrap().clone();
                 assert!(selected_sender != selected_receiver);
 
-                let (tx, _, _) = {
+                let (tx, _, new_balance) = {
                     let builder = TransactionBuilder {
                         version: 1,
                         owner: selected_sender,
@@ -165,11 +194,9 @@ mod tests {
                         )
                         .unwrap()
                 };
-                *plaintext_balances.get_mut(&selected_sender).unwrap() -= 2;
+                *plaintext_balances.get_mut(&selected_sender).unwrap() = new_balance;
                 *plaintext_balances.get_mut(&selected_receiver).unwrap() += 1;
-    
-                // println!("new balance: {:?}", plaintext_balances);
-    
+
                 tx.apply_without_verify(&mut ledger).unwrap();
                 txs.push(tx);
             }
