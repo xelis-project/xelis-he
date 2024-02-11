@@ -118,6 +118,70 @@ mod tests {
     }
 
     #[test]
+    fn test_hundred_batching() {
+        const N: usize = 100;
+        let mut ledger = Ledger {
+            accounts: (0..N)
+                .map(|_| {
+                    let account = Account::new(N as u64);
+                    (account.keypair.pubkey().compress(), account)
+                })
+                .collect(),
+        };
+
+        // Let's build all TXs for batching
+        let mut txs = Vec::new();
+        {
+            let mut ledger = ledger.clone();
+    
+            let mut plaintext_balances = HashMap::new();
+            for key in ledger.accounts.keys() {
+                plaintext_balances.insert(key.clone(), N as u64);
+            }
+    
+            for i in 0..N {
+                let selected_sender = ledger.accounts.keys().nth(i).unwrap().clone();
+                let selected_receiver = ledger.accounts.keys().nth((i + 1) % N).unwrap().clone();
+                assert!(selected_sender != selected_receiver);
+
+                let (tx, _, _) = {
+                    let builder = TransactionBuilder {
+                        version: 1,
+                        owner: selected_sender,
+                        data: TransactionTypeBuilder::Transfer(vec![TransferBuilder {
+                            dest_pubkey: selected_receiver,
+                            amount: 1,
+                        }]),
+                        fee: 1,
+                        nonce: 1,
+                    };
+                    assert_eq!(1 + 1, builder.get_transaction_cost());
+    
+                    builder
+                        .build(
+                            &ledger.get_account(&selected_sender).keypair,
+                            plaintext_balances[&selected_sender],
+                            &ledger.get_account_balance(&selected_sender).unwrap(),
+                        )
+                        .unwrap()
+                };
+                *plaintext_balances.get_mut(&selected_sender).unwrap() -= 2;
+                *plaintext_balances.get_mut(&selected_receiver).unwrap() += 1;
+    
+                // println!("new balance: {:?}", plaintext_balances);
+    
+                tx.apply_without_verify(&mut ledger).unwrap();
+                txs.push(tx);
+            }
+        }
+
+        Transaction::verify_batch(
+            &txs,
+            &mut ledger,
+        ).unwrap();
+    }
+
+    #[test]
     fn realistic_test() {
         let bob = Account::new(100);
         let alice = Account::new(0);
