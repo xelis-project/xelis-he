@@ -1,4 +1,4 @@
-use crate::compressed;
+use crate::{compressed, Hash};
 use curve25519_dalek::{ristretto::CompressedRistretto, scalar::Scalar, traits::IsIdentity};
 use merlin::Transcript;
 use thiserror::Error;
@@ -16,6 +16,7 @@ pub trait ProtocolTranscript {
     fn append_ciphertext(&mut self, label: &'static [u8], point: &compressed::CompressedCiphertext);
     fn append_commitment(&mut self, label: &'static [u8], point: &compressed::CompressedCommitment);
     fn append_handle(&mut self, label: &'static [u8], point: &compressed::CompressedHandle);
+    fn append_hash(&mut self, label: &'static [u8], point: &Hash);
 
     fn challenge_scalar(&mut self, label: &'static [u8]) -> Scalar;
 
@@ -26,6 +27,7 @@ pub trait ProtocolTranscript {
     ) -> Result<(), TranscriptError>;
 
     fn equality_proof_domain_separator(&mut self);
+    fn new_commitment_eq_proof_domain_separator(&mut self);
     fn transfer_proof_domain_separator(&mut self);
     fn ciphertext_validity_proof_domain_separator(&mut self);
 }
@@ -62,6 +64,10 @@ impl ProtocolTranscript for Transcript {
         self.append_message(label, bytemuck::bytes_of(handle));
     }
 
+    fn append_hash(&mut self, label: &'static [u8], point: &Hash) {
+        self.append_message(label, &point.0)
+    }
+
     fn validate_and_append_point(
         &mut self,
         label: &'static [u8],
@@ -76,6 +82,10 @@ impl ProtocolTranscript for Transcript {
     }
 
     // domain separators
+
+    fn new_commitment_eq_proof_domain_separator(&mut self) {
+        self.append_message(b"dom-sep", b"new-commitment-proof");
+    }
 
     fn transfer_proof_domain_separator(&mut self) {
         self.append_message(b"dom-sep", b"transfer-proof");

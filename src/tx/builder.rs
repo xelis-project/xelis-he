@@ -4,24 +4,47 @@
 
 use bulletproofs::RangeProof;
 use curve25519_dalek::Scalar;
-use std::{iter, mem};
+use std::{
+    collections::{HashMap, HashSet},
+    iter,
+};
+use thiserror::Error;
 
 use crate::{
     elgamal::{DecryptHandle, ElGamalCiphertext, PedersenCommitment, PedersenOpening},
     proofs::{CiphertextValidityProof, CommitmentEqProof, BP_GENS, PC_GENS},
     transcript::ProtocolTranscript,
-    CompressedCiphertext, CompressedPubkey, DecompressionError, ElGamalKeypair, ElGamalPubkey,
-    ProofGenerationError, Transaction, TransactionType, Transfer,
+    tx::NewSourceCommitment,
+    CompressedCiphertext, CompressedPubkey, ElGamalKeypair, ElGamalPubkey, Hash,
+    ProofGenerationError, Role, Transaction, TransactionType, Transfer,
 };
 
 use super::SmartContractCall;
+
+#[derive(Error, Debug, Clone)]
+pub enum GenerationError<T> {
+    State(T),
+    Proof(#[from] ProofGenerationError),
+}
+
+/// If the returned balance and ct do not match, the build function will panic and/or
+/// the proof will be invalid.
+pub trait GetBlockchainAccountBalance {
+    type Error;
+
+    /// Get the balance from the source
+    fn get_account_balance(&self, asset: &Hash) -> Result<u64, Self::Error>;
+
+    /// Get the balance ciphertext from the source
+    fn get_account_ct(&self, asset: &Hash) -> Result<CompressedCiphertext, Self::Error>;
+}
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub enum TransactionTypeBuilder {
     #[serde(rename = "transfers")]
     Transfer(Vec<TransferBuilder>),
     #[serde(rename = "burn")]
-    Burn { /* asset: Hash,  */ amount: u64, },
+    Burn { asset: Hash, amount: u64 },
     #[serde(rename = "call_contract")]
     CallContract(SmartContractCallBuilder),
     #[serde(rename = "deploy_contract")]
@@ -30,41 +53,116 @@ pub enum TransactionTypeBuilder {
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct SmartContractCallBuilder {
-    // pub contract: Hash,
-    pub amount: u64, // TODO: change to assets
-                     // pub assets: HashMap<Hash, u64>,
-                     // pub params: HashMap<String, String> // TODO
+    pub contract: Hash,
+    pub assets: HashMap<Hash, u64>,
+    pub params: HashMap<String, String>, // TODO
 }
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct TransferBuilder {
-    // pub asset: Hash,
-    pub dest_pubkey: CompressedPubkey,
+    pub asset: Hash,
     pub amount: u64,
-    // pub extra_data: Option<Vec<u8>>, // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
+    pub dest_pubkey: CompressedPubkey,
+    pub extra_data: Option<Vec<u8>>, // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct TransactionBuilder {
     pub version: u8,
-    pub owner: CompressedPubkey,
+    pub source: CompressedPubkey,
     pub data: TransactionTypeBuilder,
     pub fee: u64,
     pub nonce: u64,
 }
 
+// Internal struct for build
+struct TransferWithCommitment {
+    inner: TransferBuilder,
+    amount_commitment: PedersenCommitment,
+    amount_sender_handle: DecryptHandle,
+    amount_receiver_handle: DecryptHandle,
+    dest_pubkey: ElGamalPubkey,
+    amount_opening: PedersenOpening,
+}
+
+impl TransferWithCommitment {
+    fn get_ciphertext(&self, role: Role) -> ElGamalCiphertext {
+        let handle = match role {
+            Role::Receiver => self.amount_receiver_handle.clone(),
+            Role::Sender => self.amount_sender_handle.clone(),
+        };
+
+        ElGamalCiphertext::new(self.amount_commitment.clone(), handle)
+    }
+}
+
 impl TransactionBuilder {
+    fn get_new_source_ct(
+        &self,
+        mut ct: ElGamalCiphertext,
+        asset: &Hash,
+        transfers: &[TransferWithCommitment],
+    ) -> ElGamalCiphertext {
+        if asset.is_zeros() {
+            // Fees are applied to the native blockchain asset only.
+            ct -= Scalar::from(self.fee);
+        }
+
+        match &self.data {
+            TransactionTypeBuilder::Transfer(_) => {
+                for transfer in transfers {
+                    if &transfer.inner.asset == asset {
+                        ct -= transfer.get_ciphertext(Role::Sender);
+                    }
+                }
+            }
+            TransactionTypeBuilder::Burn {
+                amount,
+                asset: basset,
+            } => {
+                if asset == basset {
+                    ct -= Scalar::from(*amount)
+                }
+            }
+            TransactionTypeBuilder::CallContract(SmartContractCallBuilder { assets, .. }) => {
+                if let Some(&amount) = assets.get(asset) {
+                    ct -= Scalar::from(amount)
+                }
+            }
+            TransactionTypeBuilder::DeployContract(_) => todo!(),
+        }
+
+        ct
+    }
+
     /// Compute the full cost of the transaction
-    pub fn get_transaction_cost(&self) -> u64 {
-        let mut cost = self.fee;
+    pub fn get_transaction_cost(&self, asset: &Hash) -> u64 {
+        let mut cost = 0;
+
+        if asset.is_zeros() {
+            // Fees are applied to the native blockchain asset only.
+            cost += self.fee;
+        }
+
         match &self.data {
             TransactionTypeBuilder::Transfer(transfers) => {
                 for transfer in transfers {
-                    cost += transfer.amount;
+                    if &transfer.asset == asset {
+                        cost += transfer.amount;
+                    }
                 }
             }
-            TransactionTypeBuilder::Burn { amount, .. } => cost += amount,
-            TransactionTypeBuilder::CallContract(SmartContractCallBuilder { amount }) => {
-                cost += amount
+            TransactionTypeBuilder::Burn {
+                amount,
+                asset: basset,
+            } => {
+                if basset == asset {
+                    cost += amount
+                }
+            }
+            TransactionTypeBuilder::CallContract(SmartContractCallBuilder { assets, .. }) => {
+                if let Some(amount) = assets.get(asset) {
+                    cost += amount
+                }
             }
             TransactionTypeBuilder::DeployContract(_) => todo!(),
         }
@@ -72,165 +170,202 @@ impl TransactionBuilder {
         cost
     }
 
-    /// Returns (transaction, new_source_balance_ciphertext, new_source_balance).
-    pub fn build(
-        mut self,
-        source_keypair: &ElGamalKeypair,
-        source_current_balance: u64,
-        source_current_ciphertext: &CompressedCiphertext,
-    ) -> Result<(Transaction, CompressedCiphertext, u64), ProofGenerationError> {
-        let cost = self.get_transaction_cost();
-        let source_new_balance = source_current_balance
-            .checked_sub(cost)
-            .ok_or(ProofGenerationError::InsufficientFunds)?;
+    pub fn used_assets(&self) -> HashSet<Hash> {
+        let mut consumed = HashSet::new();
 
-        let source_current_ciphertext = source_current_ciphertext.decompress()?;
+        // Native asset is always used. (fees)
+        consumed.insert(Hash::default());
 
-        // 0.a Create the commitments
-
-        struct TransferWithCommitment {
-            inner: TransferBuilder,
-            amount_commitment: PedersenCommitment,
-            amount_sender_handle: DecryptHandle,
-            amount_receiver_handle: DecryptHandle,
-            dest_pubkey: ElGamalPubkey,
-            amount_opening: PedersenOpening,
-        }
-
-        let new_source_opening = PedersenOpening::generate_new();
-
-        let (transfers, commitments, openings) =
-            if let TransactionTypeBuilder::Transfer(transfers) = &mut self.data {
-                let transfers = mem::take(transfers);
-                let transfers = transfers
-                    .into_iter()
-                    .map(|transfer| {
-                        let dest_pubkey = transfer.dest_pubkey.decompress()?;
-
-                        let amount_opening = PedersenOpening::generate_new();
-                        let amount_commitment =
-                            PedersenCommitment::new_with_opening(transfer.amount, &amount_opening);
-                        let amount_sender_handle =
-                            source_keypair.pubkey().decrypt_handle(&amount_opening);
-                        let amount_receiver_handle = dest_pubkey.decrypt_handle(&amount_opening);
-
-                        Ok(TransferWithCommitment {
-                            inner: transfer,
-                            amount_commitment,
-                            amount_sender_handle,
-                            amount_receiver_handle,
-                            dest_pubkey,
-                            amount_opening,
-                        })
-                    })
-                    .collect::<Result<Vec<_>, DecompressionError>>()?;
-
-                // Create fake commitments to make `m` (party size) of the bulletproof a power of two.
-                let n_dud_commitments = (transfers.len() + 1)
-                    .checked_next_power_of_two()
-                    .ok_or(ProofGenerationError::Format)? - (transfers.len() + 1);
-
-                let (commitments, openings): (Vec<_>, Vec<_>) =
-                    iter::once((source_new_balance, new_source_opening.as_scalar()))
-                        .chain(transfers.iter().map(|transfer| {
-                            (transfer.inner.amount, transfer.amount_opening.as_scalar())
-                        }))
-                        .chain(iter::repeat((0u64, Scalar::ZERO)).take(n_dud_commitments))
-                        .unzip();
-
-                (transfers, commitments, openings)
-            } else {
-                (
-                    vec![],
-                    vec![source_new_balance],
-                    vec![new_source_opening.as_scalar()],
-                )
-            };
-
-        // 0.b Make a new comitment for the remaining balance in source
-
-        // 0.c Compute the new balance
-        // We can't just do `source_current_ciphertext - Scalar::from(cost)`, as we need the pedersen openings to
-        // match up with the transfer amounts.
-
-        let new_source_commitment =
-            PedersenCommitment::new_with_opening(source_new_balance, &new_source_opening);
-        let new_source_commitment_pod = new_source_commitment.compress();
-
-        let mut new_source_ciphertext = source_current_ciphertext - Scalar::from(self.fee);
         match &self.data {
-            TransactionTypeBuilder::Transfer(_) => {
-                for transfer in &transfers {
-                    new_source_ciphertext -= ElGamalCiphertext::new(
-                        transfer.amount_commitment.clone(),
-                        transfer.amount_sender_handle.clone(),
-                    );
+            TransactionTypeBuilder::Transfer(transfers) => {
+                for transfer in transfers {
+                    consumed.insert(transfer.asset.clone());
                 }
             }
-            TransactionTypeBuilder::Burn { amount, .. } => {
-                new_source_ciphertext -= Scalar::from(*amount)
+            TransactionTypeBuilder::Burn { asset, .. } => {
+                consumed.insert(asset.clone());
             }
-            TransactionTypeBuilder::CallContract(SmartContractCallBuilder { amount }) => {
-                new_source_ciphertext -= Scalar::from(*amount)
+            TransactionTypeBuilder::CallContract(SmartContractCallBuilder { assets, .. }) => {
+                consumed.extend(assets.keys().cloned());
             }
             TransactionTypeBuilder::DeployContract(_) => todo!(),
         }
 
-        let mut transcript = Transaction::prepare_transcript(
-            self.version,
-            &self.owner,
-            self.fee,
-            self.nonce,
-            &new_source_commitment_pod,
-        );
+        consumed
+    }
 
-        // 1. Make the CommitmentEqProof
-        let new_commitment_eq_proof = CommitmentEqProof::new(
-            &source_keypair,
-            &new_source_ciphertext,
-            &new_source_opening,
-            source_new_balance,
-            &mut transcript,
-        );
+    pub fn build<B: GetBlockchainAccountBalance>(
+        mut self,
+        state: &mut B,
+        source_keypair: &ElGamalKeypair,
+    ) -> Result<Transaction, GenerationError<B::Error>> {
+        // 0.a Create the commitments
 
-        // 2. Create the CtValidityProofs
-        let data = match self.data {
-            TransactionTypeBuilder::Transfer(_) => TransactionType::Transfer(
-                transfers
-                    .into_iter()
-                    .map(|transfer| {
-                        let amount_commitment = transfer.amount_commitment.compress();
-                        let amount_sender_handle = transfer.amount_sender_handle.compress();
-                        let amount_receiver_handle = transfer.amount_receiver_handle.compress();
+        let used_assets = self.used_assets();
 
-                        transcript.transfer_proof_domain_separator();
-                        transcript.append_pubkey(b"dest_pubkey", &transfer.inner.dest_pubkey);
-                        transcript.append_commitment(b"amount_commitment", &amount_commitment);
-                        transcript.append_handle(b"amount_sender_handle", &amount_sender_handle);
-                        transcript
-                            .append_handle(b"amount_receiver_handle", &amount_receiver_handle);
+        let transfers = if let TransactionTypeBuilder::Transfer(transfers) = &mut self.data {
+            transfers
+                .iter()
+                .map(|transfer| {
+                    let dest_pubkey = transfer
+                        .dest_pubkey
+                        .decompress()
+                        .map_err(|err| GenerationError::Proof(err.into()))?;
 
-                        let ct_validity_proof = CiphertextValidityProof::new(
-                            &transfer.dest_pubkey,
-                            transfer.inner.amount,
-                            &transfer.amount_opening,
-                            &mut transcript,
-                        );
+                    let amount_opening = PedersenOpening::generate_new();
+                    let amount_commitment =
+                        PedersenCommitment::new_with_opening(transfer.amount, &amount_opening);
+                    let amount_sender_handle =
+                        source_keypair.pubkey().decrypt_handle(&amount_opening);
+                    let amount_receiver_handle = dest_pubkey.decrypt_handle(&amount_opening);
 
-                        Ok(Transfer {
-                            dest_pubkey: transfer.inner.dest_pubkey,
-                            amount_commitment,
-                            amount_sender_handle,
-                            amount_receiver_handle,
-                            ct_validity_proof,
-                        })
+                    Ok(TransferWithCommitment {
+                        inner: transfer.clone(),
+                        amount_commitment,
+                        amount_sender_handle,
+                        amount_receiver_handle,
+                        dest_pubkey,
+                        amount_opening,
                     })
-                    .collect::<Result<_, ProofGenerationError>>()?,
-            ),
-            TransactionTypeBuilder::Burn { amount } => TransactionType::Burn { amount },
-            TransactionTypeBuilder::CallContract(SmartContractCallBuilder { amount }) => {
-                TransactionType::CallContract(SmartContractCall { amount })
+                })
+                .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?
+        } else {
+            vec![]
+        };
+
+        let mut transcript =
+            Transaction::prepare_transcript(self.version, &self.source, self.fee, self.nonce);
+
+        let mut range_proof_openings: Vec<_> =
+            iter::repeat_with(|| PedersenOpening::generate_new().as_scalar())
+                .take(used_assets.len())
+                .collect();
+
+        let mut range_proof_values: Vec<_> = used_assets
+            .iter()
+            .map(|asset| {
+                let cost = self.get_transaction_cost(&asset);
+                let source_new_balance = state
+                    .get_account_balance(asset)
+                    .map_err(GenerationError::State)?
+                    .checked_sub(cost)
+                    .ok_or(ProofGenerationError::InsufficientFunds)?;
+
+                Ok(source_new_balance)
+            })
+            .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
+
+        let new_source_commitments = used_assets
+            .into_iter()
+            .zip(&range_proof_openings)
+            .zip(&range_proof_values)
+            .map(|((asset, new_source_opening), &source_new_balance)| {
+                let new_source_opening = PedersenOpening::from_scalar(*new_source_opening);
+
+                let source_current_ciphertext = state
+                    .get_account_ct(&asset)
+                    .map_err(GenerationError::State)?
+                    .decompress()
+                    .map_err(|err| GenerationError::Proof(err.into()))?;
+
+                let new_source_commitment =
+                    PedersenCommitment::new_with_opening(source_new_balance, &new_source_opening);
+                let new_source_commitment = new_source_commitment.compress();
+
+                let new_source_ciphertext =
+                    self.get_new_source_ct(source_current_ciphertext, &asset, &transfers);
+
+                // 1. Make the CommitmentEqProof
+
+                transcript.new_commitment_eq_proof_domain_separator();
+                transcript.append_hash(b"new_source_commitment_asset", &asset);
+                transcript.append_commitment(b"new_source_commitment", &new_source_commitment);
+
+                let new_commitment_eq_proof = CommitmentEqProof::new(
+                    &source_keypair,
+                    &new_source_ciphertext,
+                    &new_source_opening,
+                    source_new_balance,
+                    &mut transcript,
+                );
+
+                Ok(NewSourceCommitment {
+                    asset,
+                    new_source_commitment,
+                    new_commitment_eq_proof,
+                })
+            })
+            .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
+
+        let transfers = if let TransactionTypeBuilder::Transfer(_) = &mut self.data {
+            range_proof_values.reserve(transfers.len());
+            range_proof_openings.reserve(transfers.len());
+
+            let transfers = transfers
+                .into_iter()
+                .map(|transfer| {
+                    let amount_commitment = transfer.amount_commitment.compress();
+                    let amount_sender_handle = transfer.amount_sender_handle.compress();
+                    let amount_receiver_handle = transfer.amount_receiver_handle.compress();
+
+                    transcript.transfer_proof_domain_separator();
+                    transcript.append_pubkey(b"dest_pubkey", &transfer.inner.dest_pubkey);
+                    transcript.append_commitment(b"amount_commitment", &amount_commitment);
+                    transcript.append_handle(b"amount_sender_handle", &amount_sender_handle);
+                    transcript.append_handle(b"amount_receiver_handle", &amount_receiver_handle);
+
+                    let ct_validity_proof = CiphertextValidityProof::new(
+                        &transfer.dest_pubkey,
+                        transfer.inner.amount,
+                        &transfer.amount_opening,
+                        &mut transcript,
+                    );
+
+                    range_proof_values.push(transfer.inner.amount);
+                    range_proof_openings.push(transfer.amount_opening.as_scalar());
+
+                    Transfer {
+                        amount_commitment,
+                        amount_receiver_handle,
+                        amount_sender_handle,
+                        dest_pubkey: transfer.inner.dest_pubkey,
+                        asset: transfer.inner.asset,
+                        ct_validity_proof,
+                        extra_data: transfer.inner.extra_data,
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            transfers
+        } else {
+            vec![]
+        };
+
+        let n_commitments = range_proof_values.len();
+
+        // Create fake commitments to make `m` (party size) of the bulletproof a power of two.
+        let n_dud_commitments = n_commitments
+            .checked_next_power_of_two()
+            .ok_or(ProofGenerationError::Format)?
+            - n_commitments;
+
+        range_proof_values.extend(iter::repeat(0u64).take(n_dud_commitments));
+        range_proof_openings.extend(iter::repeat(Scalar::ZERO).take(n_dud_commitments));
+
+        let data = match self.data {
+            TransactionTypeBuilder::Transfer(_) => TransactionType::Transfer(transfers),
+            TransactionTypeBuilder::Burn { amount, asset } => {
+                TransactionType::Burn { amount, asset }
             }
+            TransactionTypeBuilder::CallContract(SmartContractCallBuilder {
+                assets,
+                contract,
+                params,
+            }) => TransactionType::CallContract(SmartContractCall {
+                assets,
+                contract,
+                params,
+            }),
             TransactionTypeBuilder::DeployContract(c) => TransactionType::DeployContract(c),
         };
 
@@ -240,24 +375,20 @@ impl TransactionBuilder {
             &BP_GENS,
             &PC_GENS,
             &mut transcript,
-            &commitments,
-            &openings,
+            &range_proof_values,
+            &range_proof_openings,
             64,
-        )?;
+        )
+        .map_err(ProofGenerationError::from)?;
 
-        Ok((
-            Transaction {
-                version: self.version,
-                source: self.owner,
-                data,
-                fee: self.fee,
-                nonce: self.nonce,
-                range_proof,
-                new_source_commitment: new_source_commitment_pod,
-                new_commitment_eq_proof,
-            },
-            new_source_ciphertext.compress(),
-            source_new_balance,
-        ))
+        Ok(Transaction {
+            version: self.version,
+            source: self.source,
+            data,
+            fee: self.fee,
+            nonce: self.nonce,
+            range_proof,
+            new_source_commitments,
+        })
     }
 }

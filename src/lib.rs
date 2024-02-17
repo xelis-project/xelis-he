@@ -14,6 +14,28 @@ pub use elgamal::{ECDLPInstance, ElGamalKeypair, ElGamalPubkey, ElGamalSecretKey
 pub use transcript::TranscriptError;
 pub use tx::{builder, Transaction, TransactionType, Transfer};
 
+// Replace with a real hash
+#[derive(
+    Eq,
+    PartialEq,
+    PartialOrd,
+    Ord,
+    Clone,
+    Debug,
+    serde::Serialize,
+    serde::Deserialize,
+    std::hash::Hash,
+    Default,
+)]
+
+pub struct Hash([u8; 32]);
+
+impl Hash {
+    pub fn is_zeros(&self) -> bool {
+        self.0 == [0; 32]
+    }
+}
+
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
 pub enum ProofGenerationError {
     #[error("invalid format")]
@@ -54,10 +76,10 @@ mod tests {
 
     use curve25519_dalek::{RistrettoPoint, Scalar};
 
-    use self::tx::{
+    use self::{builder::GetBlockchainAccountBalance, tx::{
         builder::{TransactionBuilder, TransactionTypeBuilder, TransferBuilder},
         BlockchainVerificationState,
-    };
+    }};
 
     use super::*;
 
@@ -70,12 +92,12 @@ mod tests {
         fn get_account(&self, account: &CompressedPubkey) -> &Account {
             &self.accounts[account]
         }
-        fn get_bal_decrypted(&self, account: &CompressedPubkey) -> RistrettoPoint {
+        fn get_bal_decrypted(&self, account: &CompressedPubkey, asset: &Hash) -> RistrettoPoint {
             let account = &self.accounts[account];
             *account
                 .keypair
                 .secret()
-                .decrypt(&account.balance_ct.decompress().unwrap())
+                .decrypt(&account.balances[asset].decompress().unwrap())
                 .as_point()
         }
     }
@@ -86,32 +108,59 @@ mod tests {
         fn get_account_balance(
             &self,
             account: &CompressedPubkey,
+            asset: &Hash,
         ) -> Result<CompressedCiphertext, Self::Error> {
-            Ok(self.accounts[account].balance_ct)
+            Ok(self.accounts[account].balances[asset])
         }
 
         fn update_account_balance(
             &mut self,
             account: &CompressedPubkey,
+            asset: &Hash,
             new_ct: CompressedCiphertext,
         ) -> Result<(), Self::Error> {
-            self.accounts.get_mut(account).unwrap().balance_ct = new_ct;
+            *self.accounts
+                .get_mut(account)
+                .unwrap()
+                .balances
+                .get_mut(asset)
+                .unwrap() = new_ct;
             Ok(())
+        }
+    }
+
+    struct GenerationBalance {
+        balances: HashMap<Hash, u64>,
+        account: Account,
+    }
+
+    impl GetBlockchainAccountBalance for GenerationBalance {
+        type Error = ();
+
+        fn get_account_balance(&self, asset: &Hash) -> Result<u64, Self::Error> {
+            Ok(self.balances[asset])
+        }
+
+        fn get_account_ct(&self, asset: &Hash) -> Result<CompressedCiphertext, Self::Error> {
+            Ok(self.account.balances[asset])
         }
     }
 
     #[derive(Clone, Debug)]
     struct Account {
         keypair: ElGamalKeypair,
-        balance_ct: CompressedCiphertext,
+        balances: HashMap<Hash, CompressedCiphertext>,
     }
 
     impl Account {
-        fn new(balance: u64) -> Account {
+        fn new(balances: impl IntoIterator<Item = (Hash, u64)>) -> Account {
             let keypair = ElGamalKeypair::keygen();
 
             Account {
-                balance_ct: keypair.pubkey().encrypt(balance).compress(),
+                balances: balances
+                    .into_iter()
+                    .map(|(asset, balance)| (asset, keypair.pubkey().encrypt(balance).compress()))
+                    .collect(),
                 keypair,
             }
         }
@@ -119,9 +168,9 @@ mod tests {
 
     #[test]
     fn realistic_test() {
-        let bob = Account::new(100);
-        let alice = Account::new(0);
-        let eve = Account::new(52);
+        let bob = Account::new([(Hash([0; 32]), 100), (Hash([55; 32]), 2)]);
+        let alice = Account::new([(Hash([0; 32]), 0), (Hash([55; 32]), 0)]);
+        let eve = Account::new([(Hash([0; 32]), 52), (Hash([55; 32]), 0)]);
 
         let mut ledger = Ledger {
             accounts: [
@@ -136,46 +185,62 @@ mod tests {
         let alice = alice.keypair.pubkey().compress();
         let eve = eve.keypair.pubkey().compress();
 
-        let (tx1, _, _) = {
+        let tx1 = {
             let builder = TransactionBuilder {
                 version: 1,
-                owner: bob,
+                source: bob,
                 data: TransactionTypeBuilder::Transfer(vec![
                     TransferBuilder {
                         dest_pubkey: alice,
                         amount: 52,
+                        asset: Hash([0; 32]),
+                        extra_data: Default::default(),
                     },
                     TransferBuilder {
                         dest_pubkey: eve,
                         amount: 4,
+                        asset: Hash([0; 32]),
+                        extra_data: Default::default(),
+                    },
+                    TransferBuilder {
+                        dest_pubkey: eve,
+                        amount: 2,
+                        asset: Hash([55; 32]),
+                        extra_data: Default::default(),
                     },
                 ]),
                 fee: 1,
                 nonce: 1,
             };
-            assert_eq!(52 + 4 + 1, builder.get_transaction_cost());
+            assert_eq!(52 + 4 + 1, builder.get_transaction_cost(&Hash([0; 32])));
+            assert_eq!(2, builder.get_transaction_cost(&Hash([55; 32])));
 
             builder
                 .build(
+                    &mut GenerationBalance {
+                        balances: [(Hash([0; 32]), 100), (Hash([55; 32]), 2)].into(),
+                        account: ledger.get_account(&bob).clone(),
+                    },
                     &ledger.get_account(&bob).keypair,
-                    100,
-                    &ledger.get_account_balance(&bob).unwrap(),
                 )
                 .unwrap()
         };
 
-        let (tx2, _, _) = {
+        let tx2 = {
             let builder = TransactionBuilder {
                 version: 1,
-                owner: alice,
+                source: alice,
                 data: TransactionTypeBuilder::Transfer(vec![TransferBuilder {
                     dest_pubkey: eve,
                     amount: 30,
+                    asset: Hash([0; 32]),
+                    extra_data: Default::default(),
                 }]),
                 fee: 1,
                 nonce: 1,
             };
-            assert_eq!(30 + 1, builder.get_transaction_cost());
+            assert_eq!(30 + 1, builder.get_transaction_cost(&Hash([0; 32])));
+            assert_eq!(0, builder.get_transaction_cost(&Hash([55; 32])));
 
             // the second tx must be based on alice's ciphertext _after_ the first tx
             let mut ledger_after_tx1 = ledger.clone();
@@ -183,9 +248,11 @@ mod tests {
 
             builder
                 .build(
+                    &mut GenerationBalance {
+                        balances: [(Hash([0; 32]), 0 + 52)].into(),
+                        account: ledger_after_tx1.get_account(&alice).clone(),
+                    },
                     &ledger_after_tx1.get_account(&alice).keypair,
-                    0 + 52,
-                    &ledger_after_tx1.get_account_balance(&alice).unwrap(),
                 )
                 .unwrap()
         };
@@ -193,16 +260,28 @@ mod tests {
         Transaction::verify_batch(&vec![tx1, tx2], &mut ledger).unwrap();
 
         assert_eq!(
-            ledger.get_bal_decrypted(&bob),
+            ledger.get_bal_decrypted(&bob, &Hash([0; 32])),
             RistrettoPoint::mul_base(&Scalar::from(100u64 - 52 - 4 - 1))
         );
         assert_eq!(
-            ledger.get_bal_decrypted(&alice),
+            ledger.get_bal_decrypted(&bob, &Hash([55; 32])),
+            RistrettoPoint::mul_base(&Scalar::from(2u64 - 2))
+        );
+        assert_eq!(
+            ledger.get_bal_decrypted(&alice, &Hash([0; 32])),
             RistrettoPoint::mul_base(&Scalar::from(0u64 + 52 - 30 - 1))
         );
         assert_eq!(
-            ledger.get_bal_decrypted(&eve),
+            ledger.get_bal_decrypted(&alice, &Hash([55; 32])),
+            RistrettoPoint::mul_base(&Scalar::from(0u64))
+        );
+        assert_eq!(
+            ledger.get_bal_decrypted(&eve, &Hash([0; 32])),
             RistrettoPoint::mul_base(&Scalar::from(52u64 + 4 + 30))
+        );
+        assert_eq!(
+            ledger.get_bal_decrypted(&eve, &Hash([55; 32])),
+            RistrettoPoint::mul_base(&Scalar::from(0u64 + 2))
         );
     }
 }
