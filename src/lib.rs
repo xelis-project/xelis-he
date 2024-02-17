@@ -10,7 +10,7 @@ mod transcript;
 mod tx;
 
 pub use compressed::{CompressedCiphertext, CompressedPubkey, DecompressionError};
-pub use elgamal::{ECDLPInstance, ElGamalKeypair, ElGamalPubkey, ElGamalSecretKey};
+pub use elgamal::{ecdlp, ECDLPInstance, ElGamalKeypair, ElGamalPubkey, ElGamalSecretKey};
 pub use transcript::TranscriptError;
 pub use tx::{builder, Transaction, TransactionType, Transfer};
 
@@ -28,7 +28,7 @@ pub use tx::{builder, Transaction, TransactionType, Transfer};
     Default,
 )]
 
-pub struct Hash([u8; 32]);
+pub struct Hash(pub [u8; 32]);
 
 impl Hash {
     pub fn is_zeros(&self) -> bool {
@@ -70,29 +70,27 @@ pub enum Role {
     Receiver,
 }
 
-#[cfg(test)]
-mod tests {
+// #[cfg(feature = "")]
+pub mod realistic_test {
+    use self::{builder::GetBlockchainAccountBalance, tx::BlockchainVerificationState};
+    use super::*;
+    use curve25519_dalek::RistrettoPoint;
     use std::collections::HashMap;
 
-    use curve25519_dalek::{RistrettoPoint, Scalar};
-
-    use self::{builder::GetBlockchainAccountBalance, tx::{
-        builder::{TransactionBuilder, TransactionTypeBuilder, TransferBuilder},
-        BlockchainVerificationState,
-    }};
-
-    use super::*;
-
     #[derive(Debug, Clone)]
-    struct Ledger {
-        accounts: HashMap<CompressedPubkey, Account>,
+    pub struct Ledger {
+        pub accounts: HashMap<CompressedPubkey, Account>,
     }
 
     impl Ledger {
-        fn get_account(&self, account: &CompressedPubkey) -> &Account {
+        pub fn get_account(&self, account: &CompressedPubkey) -> &Account {
             &self.accounts[account]
         }
-        fn get_bal_decrypted(&self, account: &CompressedPubkey, asset: &Hash) -> RistrettoPoint {
+        pub fn get_bal_decrypted(
+            &self,
+            account: &CompressedPubkey,
+            asset: &Hash,
+        ) -> RistrettoPoint {
             let account = &self.accounts[account];
             *account
                 .keypair
@@ -119,7 +117,8 @@ mod tests {
             asset: &Hash,
             new_ct: CompressedCiphertext,
         ) -> Result<(), Self::Error> {
-            *self.accounts
+            *self
+                .accounts
                 .get_mut(account)
                 .unwrap()
                 .balances
@@ -129,9 +128,10 @@ mod tests {
         }
     }
 
-    struct GenerationBalance {
-        balances: HashMap<Hash, u64>,
-        account: Account,
+    #[derive(Clone, Debug)]
+    pub struct GenerationBalance {
+        pub balances: HashMap<Hash, u64>,
+        pub account: Account,
     }
 
     impl GetBlockchainAccountBalance for GenerationBalance {
@@ -147,13 +147,13 @@ mod tests {
     }
 
     #[derive(Clone, Debug)]
-    struct Account {
-        keypair: ElGamalKeypair,
-        balances: HashMap<Hash, CompressedCiphertext>,
+    pub struct Account {
+        pub keypair: ElGamalKeypair,
+        pub balances: HashMap<Hash, CompressedCiphertext>,
     }
 
     impl Account {
-        fn new(balances: impl IntoIterator<Item = (Hash, u64)>) -> Account {
+        pub fn new(balances: impl IntoIterator<Item = (Hash, u64)>) -> Account {
             let keypair = ElGamalKeypair::keygen();
 
             Account {
@@ -165,6 +165,14 @@ mod tests {
             }
         }
     }
+}
+
+#[cfg(any(test, feature = "test"))]
+pub mod tests {
+    use self::tx::builder::{TransactionBuilder, TransactionTypeBuilder, TransferBuilder};
+    use super::realistic_test::*;
+    use super::*;
+    use curve25519_dalek::{RistrettoPoint, Scalar};
 
     #[test]
     fn realistic_test() {
@@ -305,14 +313,12 @@ mod tests {
             let builder = TransactionBuilder {
                 version: 1,
                 source: bob,
-                data: TransactionTypeBuilder::Transfer(vec![
-                    TransferBuilder {
-                        dest_pubkey: alice,
-                        amount: 2,
-                        asset: Hash([55; 32]),
-                        extra_data: Default::default(),
-                    },
-                ]),
+                data: TransactionTypeBuilder::Transfer(vec![TransferBuilder {
+                    dest_pubkey: alice,
+                    amount: 2,
+                    asset: Hash([55; 32]),
+                    extra_data: Default::default(),
+                }]),
                 fee: 10,
                 nonce: 1,
             };

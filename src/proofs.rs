@@ -13,7 +13,7 @@ use merlin::Transcript;
 use zeroize::Zeroize;
 
 lazy_static! {
-    pub static ref BP_GENS: BulletproofGens = BulletproofGens::new(64, 16);
+    pub static ref BP_GENS: BulletproofGens = BulletproofGens::new(64, 64);
     pub static ref PC_GENS: PedersenGens = PedersenGens::default();
 }
 

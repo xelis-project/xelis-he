@@ -213,7 +213,7 @@ impl Transaction {
     }
 
     // internal, does not verify the range proof
-    // returns (transcript, commitments for range proof, new source ct)
+    // returns (transcript, commitments for range proof)
     fn pre_verify<B: BlockchainVerificationState>(
         &self,
         state: &mut B,
