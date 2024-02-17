@@ -159,13 +159,13 @@ impl Transaction {
 
     fn prepare_transcript(
         version: u8,
-        owner: &CompressedPubkey,
+        source_pubkey: &CompressedPubkey,
         fee: u64,
         nonce: u64,
     ) -> Transcript {
         let mut transcript = Transcript::new(b"transaction-proof");
         transcript.append_u64(b"version", version.into());
-        transcript.append_pubkey(b"owner", owner);
+        transcript.append_pubkey(b"source_pubkey", source_pubkey);
         transcript.append_u64(b"fee", fee);
         transcript.append_u64(b"nonce", nonce);
         transcript

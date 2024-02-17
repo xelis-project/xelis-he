@@ -26,9 +26,27 @@ lazy_static::lazy_static! {
 /// Wrapper type around a decrypted point. Used as return value of `decrypt` to allow fast decoding of integers.
 pub struct ECDLPInstance(RistrettoPoint);
 
+pub use curve25519_dalek::ecdlp;
+
 impl ECDLPInstance {
     pub fn as_point(&self) -> &RistrettoPoint {
         &self.0
+    }
+
+    pub fn decode<TS: ecdlp::PrecomputedECDLPTables, R: ecdlp::ProgressReportFunction>(
+        &self,
+        precomputed_tables: &TS,
+        args: ecdlp::ECDLPArguments<R>,
+    ) -> Option<i64> {
+        ecdlp::decode(precomputed_tables, *self.as_point(), args)
+    }
+
+    pub fn par_decode<TS: ecdlp::PrecomputedECDLPTables + Sync, R: ecdlp::ProgressReportFunction + Sync>(
+        &self,
+        precomputed_tables: &TS,
+        args: ecdlp::ECDLPArguments<R>,
+    ) -> Option<i64> {
+        ecdlp::par_decode(precomputed_tables, *self.as_point(), args)
     }
 }
 
@@ -332,7 +350,10 @@ mod tests {
     #[test]
     fn test_dud_commitment() {
         assert_eq!(
-            PedersenCommitment::new_with_opening(Scalar::ZERO, &PedersenOpening::from_scalar(Scalar::ZERO)),
+            PedersenCommitment::new_with_opening(
+                Scalar::ZERO,
+                &PedersenOpening::from_scalar(Scalar::ZERO)
+            ),
             PedersenCommitment::from_point(RistrettoPoint::identity())
         );
     }
