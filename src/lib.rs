@@ -284,4 +284,69 @@ mod tests {
             RistrettoPoint::mul_base(&Scalar::from(0u64 + 2))
         );
     }
+
+    #[test]
+    fn non_native_asset() {
+        let bob = Account::new([(Hash([0; 32]), 100), (Hash([55; 32]), 2)]);
+        let alice = Account::new([(Hash([0; 32]), 0), (Hash([55; 32]), 0)]);
+
+        let mut ledger = Ledger {
+            accounts: [
+                (bob.keypair.pubkey().compress(), bob.clone()),
+                (alice.keypair.pubkey().compress(), alice.clone()),
+            ]
+            .into(),
+        };
+
+        let bob = bob.keypair.pubkey().compress();
+        let alice = alice.keypair.pubkey().compress();
+
+        let tx = {
+            let builder = TransactionBuilder {
+                version: 1,
+                source: bob,
+                data: TransactionTypeBuilder::Transfer(vec![
+                    TransferBuilder {
+                        dest_pubkey: alice,
+                        amount: 2,
+                        asset: Hash([55; 32]),
+                        extra_data: Default::default(),
+                    },
+                ]),
+                fee: 10,
+                nonce: 1,
+            };
+            assert_eq!(10, builder.get_transaction_cost(&Hash([0; 32])));
+            assert_eq!(2, builder.get_transaction_cost(&Hash([55; 32])));
+
+            builder
+                .build(
+                    &mut GenerationBalance {
+                        balances: [(Hash([0; 32]), 100), (Hash([55; 32]), 2)].into(),
+                        account: ledger.get_account(&bob).clone(),
+                    },
+                    &ledger.get_account(&bob).keypair,
+                )
+                .unwrap()
+        };
+
+        Transaction::verify(&tx, &mut ledger).unwrap();
+
+        assert_eq!(
+            ledger.get_bal_decrypted(&bob, &Hash([0; 32])),
+            RistrettoPoint::mul_base(&Scalar::from(100u64 - 10))
+        );
+        assert_eq!(
+            ledger.get_bal_decrypted(&bob, &Hash([55; 32])),
+            RistrettoPoint::mul_base(&Scalar::from(2u64 - 2))
+        );
+        assert_eq!(
+            ledger.get_bal_decrypted(&alice, &Hash([0; 32])),
+            RistrettoPoint::mul_base(&Scalar::from(0u64))
+        );
+        assert_eq!(
+            ledger.get_bal_decrypted(&alice, &Hash([55; 32])),
+            RistrettoPoint::mul_base(&Scalar::from(0u64 + 2))
+        );
+    }
 }
