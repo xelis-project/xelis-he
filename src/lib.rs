@@ -12,7 +12,7 @@ mod tx;
 pub use compressed::{CompressedCiphertext, CompressedPubkey, DecompressionError};
 pub use elgamal::{ecdlp, ECDLPInstance, ElGamalKeypair, ElGamalPubkey, ElGamalSecretKey};
 pub use transcript::TranscriptError;
-pub use tx::{builder, Transaction, TransactionType, Transfer};
+pub use tx::{builder, Transaction, TransactionType, Transfer, SmartContractCall};
 
 // Replace with a real hash
 #[derive(
