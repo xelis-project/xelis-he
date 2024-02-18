@@ -56,6 +56,8 @@ pub enum ProofVerificationError {
     CommitmentEqProof,
     #[error("ciphertext validity proof verification failed")]
     CiphertextValidityProof,
+    #[error("proof verification failed")]
+    GenericProof,
     #[error("range proof verification failed: {0}")]
     RangeProof(#[from] bulletproofs::ProofError),
     #[error("transcript error: {0}")]

@@ -9,7 +9,7 @@ pub mod builder;
 use crate::{
     compressed::{CompressedCommitment, CompressedHandle, DecompressionError},
     elgamal::ElGamalCiphertext,
-    proofs::{CiphertextValidityProof, CommitmentEqProof, BP_GENS, PC_GENS},
+    proofs::{BatchCollector, CiphertextValidityProof, CommitmentEqProof, BP_GENS, PC_GENS},
     transcript::ProtocolTranscript,
     CompressedCiphertext, CompressedPubkey, ECDLPInstance, ElGamalSecretKey, Hash,
     ProofVerificationError, Role,
@@ -217,6 +217,7 @@ impl Transaction {
     fn pre_verify<B: BlockchainVerificationState>(
         &self,
         state: &mut B,
+        sigma_batch_collector: &mut BatchCollector,
     ) -> Result<(Transcript, Vec<CompressedRistretto>), VerificationError<B::Error>> {
         if !self.verify_commitment_assets() {
             return Err(VerificationError::Proof(ProofVerificationError::Format));
@@ -255,11 +256,12 @@ impl Transaction {
             transcript
                 .append_commitment(b"new_source_commitment", &commitment.new_source_commitment);
 
-            commitment.new_commitment_eq_proof.verify(
+            commitment.new_commitment_eq_proof.pre_verify(
                 &owner,
                 &new_ct,
                 &new_source_commitment,
                 &mut transcript,
+                sigma_batch_collector,
             )?;
 
             // Update source balance
@@ -316,11 +318,12 @@ impl Transaction {
                 transcript
                     .append_handle(b"amount_receiver_handle", &transfer.amount_receiver_handle);
 
-                transfer.ct_validity_proof.verify(
+                transfer.ct_validity_proof.pre_verify(
                     &amount_commitment,
                     &receiver,
                     &amount_receiver_handle,
                     &mut transcript,
+                    sigma_batch_collector,
                 )?;
             }
         }
@@ -369,13 +372,18 @@ impl Transaction {
         txs: &[Transaction],
         state: &mut B,
     ) -> Result<(), VerificationError<B::Error>> {
+        let mut sigma_batch_collector = BatchCollector::default();
         let mut prepared = txs
             .iter()
             .map(|tx| {
-                let (transcript, commitments) = tx.pre_verify(state)?;
+                let (transcript, commitments) = tx.pre_verify(state, &mut sigma_batch_collector)?;
                 Ok((transcript, commitments))
             })
             .collect::<Result<Vec<_>, VerificationError<B::Error>>>()?;
+
+        sigma_batch_collector
+            .verify()
+            .map_err(|_| ProofVerificationError::GenericProof)?;
 
         RangeProof::verify_batch(
             txs.iter()
@@ -397,7 +405,12 @@ impl Transaction {
         &self,
         state: &mut B,
     ) -> Result<(), VerificationError<B::Error>> {
-        let (mut transcript, commitments) = self.pre_verify(state)?;
+        let mut sigma_batch_collector = BatchCollector::default();
+        let (mut transcript, commitments) = self.pre_verify(state, &mut sigma_batch_collector)?;
+
+        sigma_batch_collector
+            .verify()
+            .map_err(|_| ProofVerificationError::GenericProof)?;
 
         RangeProof::verify_multiple(
             &self.range_proof,

@@ -1,4 +1,8 @@
-use crate::{elgamal::{DecryptHandle, ElGamalCiphertext, PedersenCommitment, PedersenOpening, H}, transcript::ProtocolTranscript, ElGamalKeypair, ElGamalPubkey, ProofVerificationError};
+use crate::{
+    elgamal::{DecryptHandle, ElGamalCiphertext, PedersenCommitment, PedersenOpening, H},
+    transcript::ProtocolTranscript,
+    ElGamalKeypair, ElGamalPubkey, ProofVerificationError,
+};
 use bulletproofs::{BulletproofGens, PedersenGens};
 use curve25519_dalek::{
     constants::RISTRETTO_BASEPOINT_POINT as G,
@@ -7,9 +11,9 @@ use curve25519_dalek::{
     traits::{IsIdentity, MultiscalarMul, VartimeMultiscalarMul},
 };
 use lazy_static::lazy_static;
-use rand::rngs::OsRng;
-
 use merlin::Transcript;
+use rand::rngs::OsRng;
+use thiserror::Error;
 use zeroize::Zeroize;
 
 lazy_static! {
@@ -27,6 +31,29 @@ pub struct CommitmentEqProof {
     z_s: Scalar,
     z_x: Scalar,
     z_r: Scalar,
+}
+
+#[derive(Error, Debug)]
+#[error("batch multiscalar mul returned non identity point")]
+pub struct MultiscalarMulVerificationError;
+
+#[derive(Default)]
+pub struct BatchCollector {
+    dynamic_scalars: Vec<Scalar>,
+    dynamic_points: Vec<RistrettoPoint>,
+}
+
+impl BatchCollector {
+    pub fn verify(&self) -> Result<(), MultiscalarMulVerificationError> {
+        let mega_check =
+            RistrettoPoint::vartime_multiscalar_mul(&self.dynamic_scalars, &self.dynamic_points);
+
+        if mega_check.is_identity().into() {
+            Ok(())
+        } else {
+            Err(MultiscalarMulVerificationError)
+        }
+    }
 }
 
 #[allow(non_snake_case)]
@@ -87,12 +114,13 @@ impl CommitmentEqProof {
         }
     }
 
-    pub fn verify(
+    pub fn pre_verify(
         &self,
         source_pubkey: &ElGamalPubkey,
         source_ciphertext: &ElGamalCiphertext,
         destination_commitment: &PedersenCommitment,
         transcript: &mut Transcript,
+        batch_collector: &mut BatchCollector,
     ) -> Result<(), ProofVerificationError> {
         transcript.equality_proof_domain_separator();
 
@@ -128,8 +156,10 @@ impl CommitmentEqProof {
             .decompress()
             .ok_or(ProofVerificationError::CommitmentEqProof)?;
 
-        let check = RistrettoPoint::vartime_multiscalar_mul(
-            vec![
+        let batch_factor = Scalar::random(&mut OsRng);
+
+        batch_collector.dynamic_scalars.extend(
+            [
                 &self.z_s,           // z_s
                 &(-&c),              // -c
                 &(-&Scalar::ONE),    // -identity
@@ -141,27 +171,24 @@ impl CommitmentEqProof {
                 &(&ww * &self.z_r),  // ww * z_r
                 &(&ww_negated * &c), // -ww * c
                 &ww_negated,         // -ww
-            ],
-            vec![
-                P_source,      // P_source
-                &(*H),         // H
-                &Y_0,          // Y_0
-                &G,            // G
-                D_source,      // D_source
-                C_source,      // C_source
-                &Y_1,          // Y_1
-                &G,            // G
-                &(*H),         // H
-                C_destination, // C_destination
-                &Y_2,          // Y_2
-            ],
+            ]
+            .map(|s| s * batch_factor),
         );
+        batch_collector.dynamic_points.extend([
+            P_source,      // P_source
+            &(*H),         // H
+            &Y_0,          // Y_0
+            &G,            // G
+            D_source,      // D_source
+            C_source,      // C_source
+            &Y_1,          // Y_1
+            &G,            // G
+            &(*H),         // H
+            C_destination, // C_destination
+            &Y_2,          // Y_2
+        ]);
 
-        if check.is_identity() {
-            Ok(())
-        } else {
-            Err(ProofVerificationError::CommitmentEqProof.into())
-        }
+        Ok(())
     }
 }
 
@@ -211,12 +238,13 @@ impl CiphertextValidityProof {
         Self { Y_0, Y_1, z_r, z_x }
     }
 
-    pub fn verify(
+    pub fn pre_verify(
         &self,
         commitment: &PedersenCommitment,
         dest_pubkey: &ElGamalPubkey,
         dest_handle: &DecryptHandle,
         transcript: &mut Transcript,
+        batch_collector: &mut BatchCollector,
     ) -> Result<(), ProofVerificationError> {
         transcript.ciphertext_validity_proof_domain_separator();
 
@@ -242,10 +270,10 @@ impl CiphertextValidityProof {
         let C = commitment.as_point();
         let D_dest = dest_handle.as_point();
 
-        // z_r*H + z_x*G = c*C + Y_0 and z_r*P_1 = c*D_1 + Y_1
-        // <=> (z_r*H + z_x*G - c*C - Y_0) + w*(z_r*P_1 - c*D_1 - Y_1) = 0
-        let check = RistrettoPoint::vartime_multiscalar_mul(
-            vec![
+        let batch_factor = Scalar::random(&mut OsRng);
+
+        batch_collector.dynamic_scalars.extend(
+            [
                 &self.z_r,          // z_r
                 &self.z_x,          // z_x
                 &(-&c),             // -c
@@ -253,22 +281,19 @@ impl CiphertextValidityProof {
                 &(&w * &self.z_r),  // w * z_r
                 &(&w_negated * &c), // -w * c
                 &w_negated,         // -w
-            ],
-            vec![
-                &(*H),  // H
-                &G,     // G
-                C,      // C
-                &Y_0,   // Y_0
-                P_dest, // P_dest
-                D_dest, // D_dest
-                &Y_1,   // Y_1
-            ],
+            ]
+            .map(|s| s * batch_factor),
         );
+        batch_collector.dynamic_points.extend([
+            &(*H),  // H
+            &G,     // G
+            C,      // C
+            &Y_0,   // Y_0
+            P_dest, // P_dest
+            D_dest, // D_dest
+            &Y_1,   // Y_1
+        ]);
 
-        if check.is_identity() {
-            Ok(())
-        } else {
-            Err(ProofVerificationError::CiphertextValidityProof)
-        }
+        Ok(())
     }
 }
