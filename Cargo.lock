@@ -56,8 +56,8 @@ checksum = "8d696c370c750c948ada61c69a0ee2cbbb9c50b1019ddb86d9317157a99c2cae"
 
 [[package]]
 name = "bulletproofs"
-version = "5.0.0"
-source = "git+https://github.com/cchudant/bulletproofs?branch=batching-own-repo#4ed9537387db11ba4022738fd1f13301d53e3348"
+version = "5.0.2"
+source = "git+https://github.com/cchudant/bulletproofs?branch=batching-own-repo#6be585e0f192ef1fd7a9e597f8fb63e556a98aab"
 dependencies = [
  "byteorder",
  "clear_on_drop",

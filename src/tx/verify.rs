@@ -1,5 +1,5 @@
 use bulletproofs::RangeProof;
-use curve25519_dalek::{ristretto::CompressedRistretto, traits::Identity, Scalar};
+use curve25519_dalek::{ristretto::CompressedRistretto, traits::Identity, RistrettoPoint, Scalar};
 use merlin::Transcript;
 use std::iter;
 use thiserror::Error;
@@ -168,7 +168,8 @@ impl Transaction {
         &self,
         state: &mut B,
         sigma_batch_collector: &mut BatchCollector,
-    ) -> Result<(Transcript, Vec<CompressedRistretto>), VerificationError<B::Error>> {
+    ) -> Result<(Transcript, Vec<(RistrettoPoint, CompressedRistretto)>), VerificationError<B::Error>>
+    {
         if !self.verify_commitment_assets() {
             return Err(VerificationError::Proof(ProofVerificationError::Format));
         }
@@ -177,10 +178,18 @@ impl Transaction {
             transfers
                 .iter()
                 .map(DecompressedTransferCt::decompress)
-                .collect::<Result<_, DecompressionError>>().map_err(ProofVerificationError::from)?
+                .collect::<Result<_, DecompressionError>>()
+                .map_err(ProofVerificationError::from)?
         } else {
             vec![]
         };
+
+        let new_source_commitments_decompressed = self
+            .new_source_commitments
+            .iter()
+            .map(|commitment| commitment.new_source_commitment.decompress())
+            .collect::<Result<Vec<_>, DecompressionError>>()
+            .map_err(ProofVerificationError::from)?;
 
         let owner = self
             .source
@@ -194,7 +203,11 @@ impl Transaction {
 
         // 1. Verify CommitmentEqProofs
 
-        for commitment in &self.new_source_commitments {
+        for (commitment, new_source_commitment) in self
+            .new_source_commitments
+            .iter()
+            .zip(&new_source_commitments_decompressed)
+        {
             let source_current_ciphertext = state
                 .get_account_balance(&self.source, &commitment.asset)
                 .map_err(VerificationError::State)?;
@@ -203,11 +216,11 @@ impl Transaction {
                 .decompress()
                 .map_err(|err| VerificationError::Proof(err.into()))?;
             let new_ct = self
-                .get_sender_new_balance_ct(&source_current_ciphertext, &commitment.asset, &transfers_decompressed)
-                .map_err(|err| VerificationError::Proof(err.into()))?;
-            let new_source_commitment = commitment
-                .new_source_commitment
-                .decompress()
+                .get_sender_new_balance_ct(
+                    &source_current_ciphertext,
+                    &commitment.asset,
+                    &transfers_decompressed,
+                )
                 .map_err(|err| VerificationError::Proof(err.into()))?;
 
             transcript.new_commitment_eq_proof_domain_separator();
@@ -231,7 +244,7 @@ impl Transaction {
 
         // 2. Verify every CtValidityProof
         if let TransactionType::Transfer(transfers) = &self.data {
-            for (transfer, decompressed) in transfers.iter().zip(transfers_decompressed) {
+            for (transfer, decompressed) in transfers.iter().zip(&transfers_decompressed) {
                 let receiver = transfer
                     .dest_pubkey
                     .decompress()
@@ -280,7 +293,13 @@ impl Transaction {
         let new_source_commitments = self
             .new_source_commitments
             .iter()
-            .map(|commitment| commitment.new_source_commitment.as_point());
+            .zip(&new_source_commitments_decompressed)
+            .map(|(commitment, new_source_commitment)| {
+                (
+                    new_source_commitment.as_point().clone(),
+                    commitment.new_source_commitment.as_point(),
+                )
+            });
 
         let mut n_commitments = self.new_source_commitments.len();
         if let TransactionType::Transfer(transfers) = &self.data {
@@ -295,16 +314,25 @@ impl Transaction {
 
         let value_commitments: Vec<_> = if let TransactionType::Transfer(transfers) = &self.data {
             new_source_commitments
+                .chain(transfers.iter().zip(&transfers_decompressed).map(
+                    |(transfer, decompressed)| {
+                        (
+                            decompressed.amount_commitment.as_point().clone(),
+                            transfer.amount_commitment.as_point(),
+                        )
+                    },
+                ))
                 .chain(
-                    transfers
-                        .iter()
-                        .map(|transfer| transfer.amount_commitment.as_point().clone()),
+                    iter::repeat((RistrettoPoint::identity(), CompressedRistretto::identity()))
+                        .take(n_dud_commitments),
                 )
-                .chain(iter::repeat(CompressedRistretto::identity()).take(n_dud_commitments))
                 .collect()
         } else {
             new_source_commitments
-                .chain(iter::repeat(CompressedRistretto::identity()).take(n_dud_commitments))
+                .chain(
+                    iter::repeat((RistrettoPoint::identity(), CompressedRistretto::identity()))
+                        .take(n_dud_commitments),
+                )
                 .collect()
         };
 
