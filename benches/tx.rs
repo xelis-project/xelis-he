@@ -9,21 +9,21 @@ use std::iter;
 fn n_tx_bench(c: &mut Criterion, n_transfers: usize) {
     let mut group = c.benchmark_group(&format!("Create verify n={n_transfers} transfers"));
 
-    let bob = Account::new([(Hash([0; 32]), 100)]);
-    let alice = Account::new([(Hash([0; 32]), 0)]);
+    let make_builder = || {
+        let bob = Account::new([(Hash([0; 32]), 100)]);
+        let alice = Account::new([(Hash([0; 32]), 0)]);
 
-    let ledger = Ledger {
-        accounts: [
-            (bob.keypair.pubkey().compress(), bob.clone()),
-            (alice.keypair.pubkey().compress(), alice.clone()),
-        ]
-        .into(),
-    };
+        let ledger = Ledger {
+            accounts: [
+                (bob.keypair.pubkey().compress(), bob.clone()),
+                (alice.keypair.pubkey().compress(), alice.clone()),
+            ]
+            .into(),
+        };
 
-    let bob = bob.keypair.pubkey().compress();
-    let alice = alice.keypair.pubkey().compress();
+        let bob = bob.keypair.pubkey().compress();
+        let alice = alice.keypair.pubkey().compress();
 
-    let tx = {
         let builder = TransactionBuilder {
             version: 1,
             source: bob,
@@ -41,25 +41,25 @@ fn n_tx_bench(c: &mut Criterion, n_transfers: usize) {
             nonce: 1,
         };
 
-        let mut state = GenerationBalance {
+        let state = GenerationBalance {
             balances: [(Hash([0; 32]), 100)].into(),
             account: ledger.get_account(&bob).clone(),
         };
-        let keypair = &ledger.get_account(&bob).keypair;
-        group.bench_with_input(
-            "creation",
-            &(builder.clone(), state.clone(), keypair),
-            |bencher, (builder, state, keypair)| {
-                let mut state = state.clone();
-                bencher.iter(|| builder.clone().build(&mut state, *keypair).unwrap());
-            },
-        );
 
-        builder.build(&mut state, keypair).unwrap()
+        (builder, state, ledger, bob)
     };
 
-    group.bench_with_input("verification", &(tx, ledger), |bencher, (tx, ledger)| {
-        bencher.iter(|| Transaction::verify(tx, &mut ledger.clone()).unwrap())
+    group.bench_function("creation", |bencher| {
+        let (builder, mut state, ledger, bob) = make_builder();
+        let keypair = &ledger.get_account(&bob).keypair;
+        bencher.iter(|| builder.clone().build(&mut state, keypair).unwrap());
+    });
+
+    group.bench_function("verification", |bencher| {
+        let (builder, mut state, ledger, bob) = make_builder();
+        let keypair = &ledger.get_account(&bob).keypair;
+        let tx = builder.build(&mut state, keypair).unwrap();
+        bencher.iter(|| Transaction::verify(&tx, &mut ledger.clone()).unwrap())
     });
 }
 
@@ -122,57 +122,56 @@ criterion_group!(
 fn batching_bench_util(c: &mut Criterion, batch_size: usize) {
     let mut group = c.benchmark_group(&format!("Verify a batch of {batch_size} tx"));
 
-    let bob = Account::new([(Hash([0; 32]), 100000)]);
-    let alice = Account::new([(Hash([0; 32]), 0)]);
+    group.bench_function("verification", |bencher| {
+        let bob = Account::new([(Hash([0; 32]), 100000)]);
+        let alice = Account::new([(Hash([0; 32]), 0)]);
 
-    let ledger = Ledger {
-        accounts: [
-            (bob.keypair.pubkey().compress(), bob.clone()),
-            (alice.keypair.pubkey().compress(), alice.clone()),
-        ]
-        .into(),
-    };
-    let mut prover_ledger = ledger.clone();
+        let ledger = Ledger {
+            accounts: [
+                (bob.keypair.pubkey().compress(), bob.clone()),
+                (alice.keypair.pubkey().compress(), alice.clone()),
+            ]
+            .into(),
+        };
+        let mut prover_ledger = ledger.clone();
 
-    let bob = bob.keypair.pubkey().compress();
-    let alice = alice.keypair.pubkey().compress();
+        let bob = bob.keypair.pubkey().compress();
+        let alice = alice.keypair.pubkey().compress();
 
-    let mut state = GenerationBalance {
-        balances: [(Hash([0; 32]), 100000)].into(),
-        account: ledger.get_account(&bob).clone(),
-    };
-    let make_tx = || {
-        let builder = TransactionBuilder {
-            version: 1,
-            source: bob,
-            data: TransactionTypeBuilder::Transfer(vec![TransferBuilder {
-                dest_pubkey: alice,
-                amount: 1,
-                asset: Hash([0; 32]),
-                extra_data: Default::default(),
-            }]),
-            fee: 3,
-            nonce: 1,
+        let mut state = GenerationBalance {
+            balances: [(Hash([0; 32]), 100000)].into(),
+            account: ledger.get_account(&bob).clone(),
+        };
+        let make_tx = || {
+            let builder = TransactionBuilder {
+                version: 1,
+                source: bob,
+                data: TransactionTypeBuilder::Transfer(vec![TransferBuilder {
+                    dest_pubkey: alice,
+                    amount: 1,
+                    asset: Hash([0; 32]),
+                    extra_data: Default::default(),
+                }]),
+                fee: 3,
+                nonce: 1,
+            };
+
+            let cost = builder.get_transaction_cost(&Hash([0; 32]));
+
+            let keypair = &ledger.get_account(&bob).keypair;
+            let tx = builder.build(&mut state, keypair).unwrap();
+
+            tx.apply_without_verify(&mut prover_ledger).unwrap();
+
+            *state.balances.get_mut(&Hash([0; 32])).unwrap() -= cost;
+            state.account = prover_ledger.get_account(&bob).clone();
+
+            tx
         };
 
-        let cost = builder.get_transaction_cost(&Hash([0; 32]));
-
-        let keypair = &ledger.get_account(&bob).keypair;
-        let tx = builder.build(&mut state, keypair).unwrap();
-
-        tx.apply_without_verify(&mut prover_ledger).unwrap();
-
-        *state.balances.get_mut(&Hash([0; 32])).unwrap() -= cost;
-        state.account = prover_ledger.get_account(&bob).clone();
-
-        tx
-    };
-
-    let txs = iter::repeat_with(make_tx)
-        .take(batch_size)
-        .collect::<Vec<_>>();
-
-    group.bench_with_input("verification", &(txs, ledger), |bencher, (txs, ledger)| {
+        let txs = iter::repeat_with(make_tx)
+            .take(batch_size)
+            .collect::<Vec<_>>();
         bencher.iter(|| Transaction::verify_batch(&txs, &mut ledger.clone()).unwrap())
     });
 }
