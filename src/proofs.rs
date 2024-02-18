@@ -13,6 +13,7 @@ use curve25519_dalek::{
 use lazy_static::lazy_static;
 use merlin::Transcript;
 use rand::rngs::OsRng;
+use std::iter;
 use thiserror::Error;
 use zeroize::Zeroize;
 
@@ -41,12 +42,23 @@ pub struct MultiscalarMulVerificationError;
 pub struct BatchCollector {
     dynamic_scalars: Vec<Scalar>,
     dynamic_points: Vec<RistrettoPoint>,
+    g_scalar: Scalar,
+    h_scalar: Scalar,
 }
 
 impl BatchCollector {
     pub fn verify(&self) -> Result<(), MultiscalarMulVerificationError> {
-        let mega_check =
-            RistrettoPoint::vartime_multiscalar_mul(&self.dynamic_scalars, &self.dynamic_points);
+        let mega_check = RistrettoPoint::vartime_multiscalar_mul(
+            self.dynamic_scalars
+                .iter()
+                .chain(iter::once(&self.g_scalar))
+                .chain(iter::once(&self.h_scalar)),
+            self.dynamic_points
+                .iter()
+                .cloned()
+                .chain(iter::once(G))
+                .chain(iter::once(*H)),
+        );
 
         if mega_check.is_identity().into() {
             Ok(())
@@ -158,32 +170,29 @@ impl CommitmentEqProof {
 
         let batch_factor = Scalar::random(&mut OsRng);
 
+        // w * z_x * G + ww * z_x * G
+        batch_collector.g_scalar += (w * self.z_x + ww * self.z_x) * batch_factor;
+        // -c * H + ww * z_r * H
+        batch_collector.h_scalar += (-c + ww * self.z_r) * batch_factor;
+
         batch_collector.dynamic_scalars.extend(
             [
-                &self.z_s,           // z_s
-                &(-&c),              // -c
-                &(-&Scalar::ONE),    // -identity
-                &(&w * &self.z_x),   // w * z_x
-                &(&w * &self.z_s),   // w * z_s
-                &(&w_negated * &c),  // -w * c
-                &w_negated,          // -w
-                &(&ww * &self.z_x),  // ww * z_x
-                &(&ww * &self.z_r),  // ww * z_r
-                &(&ww_negated * &c), // -ww * c
-                &ww_negated,         // -ww
+                self.z_s,       // z_s
+                -Scalar::ONE,   // -identity
+                w * self.z_s,   // w * z_s
+                w_negated * c,  // -w * c
+                w_negated,      // -w
+                ww_negated * c, // -ww * c
+                ww_negated,     // -ww
             ]
             .map(|s| s * batch_factor),
         );
         batch_collector.dynamic_points.extend([
             P_source,      // P_source
-            &(*H),         // H
             &Y_0,          // Y_0
-            &G,            // G
             D_source,      // D_source
             C_source,      // C_source
             &Y_1,          // Y_1
-            &G,            // G
-            &(*H),         // H
             C_destination, // C_destination
             &Y_2,          // Y_2
         ]);
@@ -272,21 +281,22 @@ impl CiphertextValidityProof {
 
         let batch_factor = Scalar::random(&mut OsRng);
 
+        // z_x * G
+        batch_collector.g_scalar += self.z_x * batch_factor;
+        // z_r * H
+        batch_collector.h_scalar += self.z_r * batch_factor;
+
         batch_collector.dynamic_scalars.extend(
             [
-                &self.z_r,          // z_r
-                &self.z_x,          // z_x
-                &(-&c),             // -c
-                &-(&Scalar::ONE),   // -identity
-                &(&w * &self.z_r),  // w * z_r
-                &(&w_negated * &c), // -w * c
-                &w_negated,         // -w
+                -c,            // -c
+                -Scalar::ONE,  // -identity
+                w * self.z_r,  // w * z_r
+                w_negated * c, // -w * c
+                w_negated,     // -w
             ]
             .map(|s| s * batch_factor),
         );
         batch_collector.dynamic_points.extend([
-            &(*H),  // H
-            &G,     // G
             C,      // C
             &Y_0,   // Y_0
             P_dest, // P_dest
