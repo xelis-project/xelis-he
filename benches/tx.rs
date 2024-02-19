@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use elgamaltransactions::{
+use xelis_he::{
     builder::{TransactionBuilder, TransactionTypeBuilder, TransferBuilder},
     realistic_test::*,
     Hash, Transaction,
