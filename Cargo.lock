@@ -331,24 +331,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "11157ac094ffbdde99aa67b23417ebdd801842852b500e395a45a9c0aac03e4a"
 
 [[package]]
-name = "elgamaltransactions"
-version = "0.1.0"
-dependencies = [
- "bulletproofs",
- "bytemuck",
- "criterion",
- "curve25519-dalek",
- "lazy_static",
- "merlin",
- "rand",
- "serde",
- "serde_derive",
- "sha3 0.9.1",
- "thiserror",
- "zeroize",
-]
-
-[[package]]
 name = "ff"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -990,6 +972,24 @@ name = "windows_x86_64_msvc"
 version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dff9641d1cd4be8d1a070daf9e3773c5f67e78b4d9d42263020c057706765c04"
+
+[[package]]
+name = "xelis-he"
+version = "0.1.0"
+dependencies = [
+ "bulletproofs",
+ "bytemuck",
+ "criterion",
+ "curve25519-dalek",
+ "lazy_static",
+ "merlin",
+ "rand",
+ "serde",
+ "serde_derive",
+ "sha3 0.9.1",
+ "thiserror",
+ "zeroize",
+]
 
 [[package]]
 name = "zeroize"
