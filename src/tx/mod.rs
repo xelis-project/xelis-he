@@ -4,7 +4,7 @@ use std::collections::HashMap;
 pub mod builder;
 mod verify;
 
-pub use verify::{BlockchainVerificationState, VerificationError};
+pub use verify::BlockchainVerificationState;
 
 use crate::{
     compressed::{CompressedCommitment, CompressedHandle, DecompressionError},
