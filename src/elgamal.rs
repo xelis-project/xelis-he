@@ -348,6 +348,32 @@ mod tests {
     }
 
     #[test]
+    fn test_identity() {
+        let keypair = ElGamalKeypair::keygen();
+
+        let ct = keypair.pubkey().encrypt(0u64);
+
+        assert_eq!(
+            *keypair.secret().decrypt(&ct).as_point(),
+            RistrettoPoint::identity()
+        );
+    }
+
+    #[test]
+    fn test_universal_identity() {
+        let keypair = ElGamalKeypair::keygen();
+
+        let commitment = PedersenCommitment::from_point(RistrettoPoint::identity());
+        let handle = DecryptHandle::from_point(RistrettoPoint::identity());
+        let ct = ElGamalCiphertext::new(commitment, handle);
+
+        assert_eq!(
+            *keypair.secret().decrypt(&ct).as_point(),
+            RistrettoPoint::identity()
+        );
+    }
+
+    #[test]
     fn test_dud_commitment() {
         assert_eq!(
             PedersenCommitment::new_with_opening(
