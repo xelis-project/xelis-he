@@ -12,6 +12,7 @@ use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use sha3::Digest;
 use zeroize::Zeroize;
+use serde::de::Error as SerdeError;
 
 lazy_static::lazy_static! {
     // base point for encoding the commitments opening
@@ -27,6 +28,8 @@ lazy_static::lazy_static! {
 pub struct ECDLPInstance(RistrettoPoint);
 
 pub use curve25519_dalek::ecdlp;
+
+use crate::CompressedCiphertext;
 
 impl ECDLPInstance {
     pub fn as_point(&self) -> &RistrettoPoint {
@@ -318,6 +321,19 @@ impl Sub<&Scalar> for &ElGamalCiphertext {
 
 make_add_variants!(ElGamalCiphertext, Scalar, Output = ElGamalCiphertext);
 make_sub_variants!(ElGamalCiphertext, Scalar, Output = ElGamalCiphertext);
+
+impl Serialize for ElGamalCiphertext {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.compress().serialize(serializer)
+    }
+}
+
+impl<'a> Deserialize<'a> for ElGamalCiphertext {
+    fn deserialize<D: serde::Deserializer<'a>>(deserializer: D) -> Result<Self, D::Error> {
+        let compressed = CompressedCiphertext::deserialize(deserializer)?;
+        Ok(compressed.decompress().map_err(SerdeError::custom)?)
+    }
+}
 
 #[cfg(test)]
 mod tests {
