@@ -10,7 +10,11 @@ mod transcript;
 mod tx;
 
 pub use compressed::{CompressedCiphertext, CompressedPubkey, DecompressionError};
-pub use elgamal::{ecdlp, ECDLPInstance, ElGamalKeypair, ElGamalPubkey, ElGamalSecretKey, ElGamalCiphertext};
+pub use elgamal::{
+    ecdlp, ECDLPInstance, ElGamalKeypair,
+    ElGamalPubkey, ElGamalSecretKey, ElGamalCiphertext,
+    PedersenCommitment, DecryptHandle
+};
 pub use transcript::TranscriptError;
 pub use tx::{builder, Transaction, TransactionType, Transfer, SmartContractCall};
 
