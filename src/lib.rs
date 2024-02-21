@@ -18,6 +18,9 @@ pub use elgamal::{
 pub use transcript::TranscriptError;
 pub use tx::{builder, Transaction, TransactionType, Transfer, SmartContractCall};
 
+// Re-export the curve25519_dalek types
+pub use curve25519_dalek::ristretto::RistrettoPoint;
+
 // Replace with a real hash
 #[derive(
     Eq,
