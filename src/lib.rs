@@ -18,6 +18,8 @@ pub use elgamal::{
 pub use transcript::TranscriptError;
 pub use tx::{builder, Transaction, TransactionType, Transfer, SmartContractCall};
 
+pub use tx::BlockchainVerificationState;
+
 // Re-export the curve25519_dalek types
 pub use curve25519_dalek::{
     ristretto::RistrettoPoint,
@@ -138,6 +140,23 @@ pub mod realistic_test {
                 .unwrap() = new_ct;
             Ok(())
         }
+
+        fn get_account_nonce(&self, account: &CompressedPubkey) -> Result<u64, Self::Error> {
+            Ok(self.accounts[account].nonce)
+        }
+
+        fn update_account_nonce(
+            &mut self,
+            account: &CompressedPubkey,
+            new_nonce: u64,
+        ) -> Result<(), Self::Error> {
+            self
+                .accounts
+                .get_mut(account)
+                .unwrap()
+                .nonce = new_nonce;
+            Ok(())
+        }
     }
 
     #[derive(Clone, Debug)]
@@ -162,6 +181,7 @@ pub mod realistic_test {
     pub struct Account {
         pub keypair: ElGamalKeypair,
         pub balances: HashMap<Hash, CompressedCiphertext>,
+        pub nonce: u64,
     }
 
     impl Account {
@@ -174,6 +194,7 @@ pub mod realistic_test {
                     .map(|(asset, balance)| (asset, keypair.pubkey().encrypt(balance).compress()))
                     .collect(),
                 keypair,
+                nonce: 0,
             }
         }
     }
@@ -230,7 +251,7 @@ pub mod tests {
                     },
                 ]),
                 fee: 1,
-                nonce: 1,
+                nonce: 0,
             };
             assert_eq!(52 + 4 + 1, builder.get_transaction_cost(&Hash([0; 32])));
             assert_eq!(2, builder.get_transaction_cost(&Hash([55; 32])));
@@ -257,7 +278,7 @@ pub mod tests {
                     extra_data: Default::default(),
                 }]),
                 fee: 1,
-                nonce: 1,
+                nonce: 0,
             };
             assert_eq!(30 + 1, builder.get_transaction_cost(&Hash([0; 32])));
             assert_eq!(0, builder.get_transaction_cost(&Hash([55; 32])));
@@ -332,7 +353,7 @@ pub mod tests {
                     extra_data: Default::default(),
                 }]),
                 fee: 10,
-                nonce: 1,
+                nonce: 0,
             };
             assert_eq!(10, builder.get_transaction_cost(&Hash([0; 32])));
             assert_eq!(2, builder.get_transaction_cost(&Hash([55; 32])));

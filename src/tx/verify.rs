@@ -16,6 +16,7 @@ use crate::{
 #[derive(Error, Debug, Clone)]
 pub enum VerificationError<T> {
     State(T),
+    InvalidNonce,
     Proof(#[from] ProofVerificationError),
 }
 
@@ -37,6 +38,19 @@ pub trait BlockchainVerificationState {
         account: &CompressedPubkey,
         asset: &Hash,
         new_ct: CompressedCiphertext,
+    ) -> Result<(), Self::Error>;
+
+    /// Get the nonce of an account
+    fn get_account_nonce(
+        &self,
+        account: &CompressedPubkey
+    ) -> Result<u64, Self::Error>;
+
+    /// Apply a new nonce to an account
+    fn update_account_nonce(
+        &mut self,
+        account: &CompressedPubkey,
+        new_nonce: u64
     ) -> Result<(), Self::Error>;
 }
 
@@ -170,6 +184,20 @@ impl Transaction {
         sigma_batch_collector: &mut BatchCollector,
     ) -> Result<(Transcript, Vec<(RistrettoPoint, CompressedRistretto)>), VerificationError<B::Error>>
     {
+        // First, check the nonce
+        let account_nonce = state
+            .get_account_nonce(&self.source)
+            .map_err(VerificationError::State)?;
+
+        if account_nonce != self.nonce {
+            return Err(VerificationError::InvalidNonce);
+        }
+
+        // Nonce is valid, update it for next transactions if any
+        state
+            .update_account_nonce(&self.source, self.nonce)
+            .map_err(VerificationError::State)?;
+
         if !self.verify_commitment_assets() {
             return Err(VerificationError::Proof(ProofVerificationError::Format));
         }
@@ -450,7 +478,7 @@ impl Transaction {
                 )?;
             }
         }
-
+    
         Ok(())
     }
 }
