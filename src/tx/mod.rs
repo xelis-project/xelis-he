@@ -16,7 +16,8 @@ use crate::{
 pub struct Transfer {
     pub asset: Hash,
     pub dest_pubkey: CompressedPubkey,
-    pub extra_data: Option<Vec<u8>>, // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
+    // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
+    pub extra_data: Option<Vec<u8>>,
 
     /// Represents the ciphertext along with `amount_sender_handle` and `amount_receiver_handle`.
     /// The opening is reused for both of the sender and receiver commitments.
@@ -84,4 +85,30 @@ pub struct Transaction {
     new_source_commitments: Vec<NewSourceCommitment>,
     /// The range proof is aggregated across all transfers and across all assets.
     range_proof: RangeProof,
+}
+
+impl Transaction {
+    pub fn get_version(&self) -> u8 {
+        self.version
+    }
+
+    pub fn get_source(&self) -> &CompressedPubkey {
+        &self.source
+    }
+
+    pub fn get_data(&self) -> &TransactionType {
+        &self.data
+    }
+
+    pub fn get_fee(&self) -> u64 {
+        self.fee
+    }
+
+    pub fn get_nonce(&self) -> u64 {
+        self.nonce
+    }
+
+    pub fn consume(self) -> (CompressedPubkey, TransactionType) {
+        (self.source, self.data)
+    }
 }
