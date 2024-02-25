@@ -121,6 +121,7 @@ pub mod realistic_test {
             &self,
             account: &CompressedPubkey,
             asset: &Hash,
+            _role: Role,
         ) -> Result<CompressedCiphertext, Self::Error> {
             Ok(self.accounts[account].balances[asset])
         }
@@ -130,6 +131,7 @@ pub mod realistic_test {
             account: &CompressedPubkey,
             asset: &Hash,
             new_ct: CompressedCiphertext,
+            _role: Role,
         ) -> Result<(), Self::Error> {
             *self
                 .accounts

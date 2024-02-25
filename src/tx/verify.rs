@@ -30,6 +30,7 @@ pub trait BlockchainVerificationState {
         &self,
         account: &CompressedPubkey,
         asset: &Hash,
+        role: Role,
     ) -> Result<CompressedCiphertext, Self::Error>;
 
     /// Apply a new balance ciphertext to an account
@@ -38,6 +39,7 @@ pub trait BlockchainVerificationState {
         account: &CompressedPubkey,
         asset: &Hash,
         new_ct: CompressedCiphertext,
+        role: Role,
     ) -> Result<(), Self::Error>;
 
     /// Get the nonce of an account
@@ -223,6 +225,7 @@ impl Transaction {
             .source
             .decompress()
             .map_err(|err| VerificationError::Proof(err.into()))?;
+
         let mut transcript =
             Self::prepare_transcript(self.version, &self.source, self.fee, self.nonce);
 
@@ -237,7 +240,7 @@ impl Transaction {
             .zip(&new_source_commitments_decompressed)
         {
             let source_current_ciphertext = state
-                .get_account_balance(&self.source, &commitment.asset)
+                .get_account_balance(&self.source, &commitment.asset, Role::Sender)
                 .map_err(VerificationError::State)?;
 
             let source_current_ciphertext = source_current_ciphertext
@@ -266,7 +269,12 @@ impl Transaction {
 
             // Update source balance
             state
-                .update_account_balance(&self.source, &commitment.asset, new_ct.compress())
+                .update_account_balance(
+                    &self.source,
+                    &commitment.asset,
+                    new_ct.compress(),
+                    Role::Sender,
+                )
                 .map_err(VerificationError::State)?;
         }
 
@@ -281,7 +289,11 @@ impl Transaction {
                 // Update receiver balance
 
                 let current_balance = state
-                    .get_account_balance(&transfer.dest_pubkey, &transfer.asset)
+                    .get_account_balance(
+                        &transfer.dest_pubkey,
+                        &transfer.asset,
+                        Role::Receiver
+                    )
                     .map_err(VerificationError::State)?
                     .decompress()
                     .map_err(ProofVerificationError::from)?;
@@ -294,6 +306,7 @@ impl Transaction {
                         &transfer.dest_pubkey,
                         &transfer.asset,
                         receiver_new_balance.compress(),
+                        Role::Receiver,
                     )
                     .map_err(VerificationError::State)?;
 
@@ -446,7 +459,11 @@ impl Transaction {
         for commitment in &self.new_source_commitments {
             let asset = &commitment.asset;
             let current_bal_sender = state
-                .get_account_balance(&self.source, asset)?
+                .get_account_balance(
+                    &self.source,
+                    asset,
+                    Role::Sender
+                )?
                 .decompress()
                 .expect("ill-formed ciphertext");
 
@@ -454,13 +471,21 @@ impl Transaction {
                 .get_sender_new_balance_ct(&current_bal_sender, &asset, &transfers_decompressed)
                 .expect("ill-formed ciphertext");
 
-            state.update_account_balance(&self.source, asset, new_ct.compress())?;
+            state.update_account_balance(
+                &self.source, asset,
+                new_ct.compress(),
+                Role::Sender
+            )?;
         }
 
         if let TransactionType::Transfer(transfers) = &self.data {
             for transfer in transfers {
                 let current_bal = state
-                    .get_account_balance(&transfer.dest_pubkey, &transfer.asset)?
+                    .get_account_balance(
+                        &transfer.dest_pubkey,
+                        &transfer.asset,
+                        Role::Receiver
+                    )?
                     .decompress()
                     .expect("ill-formed ciphertext");
 
@@ -475,6 +500,7 @@ impl Transaction {
                     &transfer.dest_pubkey,
                     &transfer.asset,
                     receiver_new_balance.compress(),
+                    Role::Receiver,
                 )?;
             }
         }
