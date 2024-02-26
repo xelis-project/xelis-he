@@ -54,6 +54,14 @@ pub trait BlockchainVerificationState {
         account: &CompressedPubkey,
         new_nonce: u64
     ) -> Result<(), Self::Error>;
+
+    /// Set the final output ciphertext for a transaction
+    fn set_output_ciphertext(
+        &mut self,
+        account: &CompressedPubkey,
+        asset: &Hash,
+        ct: ElGamalCiphertext,
+    ) -> Result<(), Self::Error>;
 }
 
 struct DecompressedTransferCt {
@@ -82,25 +90,25 @@ impl DecompressedTransferCt {
 }
 
 impl Transaction {
-    // get the new sender balance ciphertext
-    fn get_sender_new_balance_ct(
+    /// Get the new output ciphertext
+    // This is used to substract the amount from the sender's balance
+    fn get_sender_output_ct(
         &self,
-        source_current_balance: &ElGamalCiphertext,
         asset: &Hash,
         decompressed_transfers: &[DecompressedTransferCt],
     ) -> Result<ElGamalCiphertext, DecompressionError> {
-        let mut bal = source_current_balance.clone();
+        let mut bal = ElGamalCiphertext::zero();
 
         if asset.is_zeros() {
             // Fees are applied to the native blockchain asset only.
-            bal -= Scalar::from(self.fee);
+            bal += Scalar::from(self.fee);
         }
 
         match &self.data {
             TransactionType::Transfer(transfers) => {
                 for (transfer, d) in transfers.iter().zip(decompressed_transfers.iter()) {
                     if asset == &transfer.asset {
-                        bal -= d.get_ciphertext(Role::Sender);
+                        bal += d.get_ciphertext(Role::Sender);
                     }
                 }
             }
@@ -109,12 +117,12 @@ impl Transaction {
                 asset: basset,
             } => {
                 if asset == basset {
-                    bal -= Scalar::from(*amount)
+                    bal += Scalar::from(*amount)
                 }
             }
             TransactionType::CallContract(SmartContractCall { assets, .. }) => {
                 if let Some(amount) = assets.get(asset) {
-                    bal -= Scalar::from(*amount)
+                    bal += Scalar::from(*amount)
                 }
             }
             TransactionType::DeployContract(_) => todo!(),
@@ -246,14 +254,13 @@ impl Transaction {
             let source_current_ciphertext = source_current_ciphertext
                 .decompress()
                 .map_err(|err| VerificationError::Proof(err.into()))?;
-            let new_ct = self
-                .get_sender_new_balance_ct(
-                    &source_current_ciphertext,
-                    &commitment.asset,
-                    &transfers_decompressed,
-                )
-                .map_err(|err| VerificationError::Proof(err.into()))?;
 
+            // Ciphertext containing all the funds spent for this commitment
+            let output = self.get_sender_output_ct(&commitment.asset, &transfers_decompressed)
+            .map_err(|err| VerificationError::Proof(err.into()))?;
+
+            // Compute the new final balance for account
+            let new_ct = source_current_ciphertext - &output;
             transcript.new_commitment_eq_proof_domain_separator();
             transcript.append_hash(b"new_source_commitment_asset", &commitment.asset);
             transcript
@@ -275,6 +282,10 @@ impl Transaction {
                     new_ct.compress(),
                     Role::Sender,
                 )
+                .map_err(VerificationError::State)?;
+
+            // Give the new output ciphertext to the state
+            state.set_output_ciphertext(&self.source, &commitment.asset, output)
                 .map_err(VerificationError::State)?;
         }
 
@@ -467,15 +478,19 @@ impl Transaction {
                 .decompress()
                 .expect("ill-formed ciphertext");
 
-            let new_ct = self
-                .get_sender_new_balance_ct(&current_bal_sender, &asset, &transfers_decompressed)
+            let output = self.get_sender_output_ct(asset, &transfers_decompressed)
                 .expect("ill-formed ciphertext");
+
+            // Compute the new final balance for account
+            let new_ct = current_bal_sender - &output;
 
             state.update_account_balance(
                 &self.source, asset,
                 new_ct.compress(),
                 Role::Sender
             )?;
+
+            state.set_output_ciphertext(&self.source, asset, output)?;
         }
 
         if let TransactionType::Transfer(transfers) = &self.data {

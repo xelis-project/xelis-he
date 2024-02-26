@@ -159,6 +159,15 @@ pub mod realistic_test {
                 .nonce = new_nonce;
             Ok(())
         }
+
+        fn set_output_ciphertext(
+                &mut self,
+                _output: &CompressedPubkey,
+                _asset: &Hash,
+                _ct: ElGamalCiphertext,
+            ) -> Result<(), Self::Error> {
+                Ok(())
+        }
     }
 
     #[derive(Clone, Debug)]

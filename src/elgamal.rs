@@ -6,7 +6,7 @@ use curve25519_dalek::{
     constants::{RISTRETTO_BASEPOINT_COMPRESSED, RISTRETTO_BASEPOINT_POINT as G},
     ristretto::RistrettoPoint,
     scalar::Scalar,
-    traits::MultiscalarMul,
+    traits::{Identity, MultiscalarMul},
 };
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
@@ -132,6 +132,14 @@ impl ElGamalCiphertext {
 
     pub fn new(commitment: PedersenCommitment, handle: DecryptHandle) -> Self {
         Self { commitment, handle }
+    }
+
+    /// Create a ciphertext with a zero value
+    pub fn zero() -> Self {
+        Self {
+            commitment: PedersenCommitment::from_point(RistrettoPoint::identity()),
+            handle: DecryptHandle::from_point(RistrettoPoint::identity()),
+        }
     }
 }
 
@@ -336,8 +344,6 @@ impl<'a> Deserialize<'a> for ElGamalCiphertext {
 
 #[cfg(test)]
 mod tests {
-    use curve25519_dalek::traits::Identity;
-
     use super::*;
 
     #[test]
@@ -377,14 +383,17 @@ mod tests {
     #[test]
     fn test_universal_identity() {
         let keypair = ElGamalKeypair::keygen();
+        let ct = ElGamalCiphertext::zero();
 
-        let commitment = PedersenCommitment::from_point(RistrettoPoint::identity());
-        let handle = DecryptHandle::from_point(RistrettoPoint::identity());
-        let ct = ElGamalCiphertext::new(commitment, handle);
+        let point = *keypair.secret().decrypt(&ct).as_point();
+        assert_eq!(
+            point,
+            RistrettoPoint::identity()
+        );
 
         assert_eq!(
-            *keypair.secret().decrypt(&ct).as_point(),
-            RistrettoPoint::identity()
+            point,
+            Scalar::from(0u64) * G
         );
     }
 
