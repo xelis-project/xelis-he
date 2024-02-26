@@ -148,15 +148,14 @@ impl ElGamalKeypair {
 impl ElGamalKeypair {
     pub fn keygen() -> Self {
         // secret scalar should be non-zero except with negligible probability
-        let mut s = Scalar::random(&mut OsRng);
-        let keypair = Self::keygen_with_secret(&s);
+        let s = Scalar::random(&mut OsRng);
+        let keypair = Self::keygen_with_secret(s);
 
-        s.zeroize();
         keypair
     }
 
-    pub fn keygen_with_secret(s: &Scalar) -> Self {
-        let sk = ElGamalSecretKey(*s);
+    pub fn keygen_with_secret(s: Scalar) -> Self {
+        let sk = ElGamalSecretKey(s);
         let pk = ElGamalPubkey::new(&sk);
 
         Self { pk, sk }
