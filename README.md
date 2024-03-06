@@ -20,4 +20,4 @@ Miner fee is also supported in transaction and can be decreased publicly from th
 We are grouping each asset into "source commitments" to decrease only one time per asset the sender balance.
 So, even if you create N transfers with the same asset being spent, it will operate only one subtraction from sender balance.
 
-Range proofs aggregation is implemented and batching for fast verification, this is currently giving us (including Sigma Proofs) a ~0.40 ms verification time per TX.
+Range proofs aggregation is implemented and batching for fast verification, this is currently giving us (including Sigma Proofs) a ~0.40 ms verification time per TX over 100 transactions batched.
