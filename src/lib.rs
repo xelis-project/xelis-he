@@ -11,7 +11,7 @@ mod tx;
 
 pub use compressed::{CompressedCiphertext, CompressedPubkey, DecompressionError};
 pub use elgamal::{
-    ecdlp, ECDLPInstance, ElGamalKeypair,
+    ecdlp, ECDLPInstance, ElGamalKeypair, Signature,
     ElGamalPubkey, ElGamalSecretKey, ElGamalCiphertext,
     PedersenCommitment, DecryptHandle
 };

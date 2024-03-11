@@ -10,7 +10,7 @@ use curve25519_dalek::{
 };
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
-use sha3::Digest;
+use sha3::{Digest, Sha3_512};
 use zeroize::Zeroize;
 use serde::de::Error as SerdeError;
 
@@ -24,12 +24,42 @@ lazy_static::lazy_static! {
     };
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Signature {
+    s: Scalar,
+    e: Scalar,
+}
+
+impl Signature {
+    pub fn new(s: Scalar, e: Scalar) -> Self {
+        Self { s, e }
+    }
+
+    // Verify the signature using the Public Key and the hash of the message
+    pub fn verify(&self, message: &[u8], key: &ElGamalPubkey) -> bool {
+        let r = *H * &self.s + key.as_point() * -self.e;
+        let calculated = hash_and_point_to_scalar(&key.compress(), message, &r);
+        self.e == calculated
+    }
+}
+
+// Create a Scalar from Public Key, Hash of the message, and selected point
+pub fn hash_and_point_to_scalar(key: &CompressedPubkey, message: &[u8], point: &RistrettoPoint) -> Scalar {
+    let mut hasher = Sha3_512::new();
+    hasher.update(&key.0);
+    hasher.update(message);
+    hasher.update(point.compress().as_bytes());
+
+    let hash = hasher.finalize();
+    Scalar::from_bytes_mod_order_wide(&hash.try_into().unwrap())
+}
+
 /// Wrapper type around a decrypted point. Used as return value of `decrypt` to allow fast decoding of integers.
 pub struct ECDLPInstance(RistrettoPoint);
 
 pub use curve25519_dalek::ecdlp;
 
-use crate::CompressedCiphertext;
+use crate::{CompressedCiphertext, CompressedPubkey};
 
 impl ECDLPInstance {
     pub fn as_point(&self) -> &RistrettoPoint {
@@ -150,6 +180,14 @@ impl ElGamalKeypair {
 
     pub fn secret(&self) -> &ElGamalSecretKey {
         &self.sk
+    }
+
+    pub fn sign(&self, message: &[u8]) -> Signature {
+        let k = Scalar::random(&mut OsRng);
+        let r = k * *H;
+        let e = hash_and_point_to_scalar(&self.pk.compress(), message, &r);
+        let s = self.sk.as_scalar().invert() * e + k;
+        Signature::new(s, e)
     }
 }
 
@@ -406,5 +444,18 @@ mod tests {
             ),
             PedersenCommitment::from_point(RistrettoPoint::identity())
         );
+    }
+
+    #[test]
+    fn test_signature() {
+        let keypair = ElGamalKeypair::keygen();
+        let message = b"Hello, world!";
+        let signature = keypair.sign(message);
+
+        assert!(signature.verify(message, keypair.pubkey()));
+        assert!(!signature.verify(b"hello world", keypair.pubkey()));
+
+        let keypair2 = ElGamalKeypair::keygen();
+        assert!(!signature.verify(message, keypair2.pubkey()));
     }
 }
