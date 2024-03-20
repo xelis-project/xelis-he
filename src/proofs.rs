@@ -307,3 +307,45 @@ impl CiphertextValidityProof {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_eq_proof() {
+        let mut t = Transcript::new(b"test_eq_proof");
+        let keypair = ElGamalKeypair::keygen();
+
+        // Generate our initial balance
+        let balance = 100u64;
+        let source_balance = keypair.pubkey().encrypt(balance);
+
+        // Generate the ciphertext
+        let amount = 5u64;
+        let opening = PedersenOpening::generate_new();
+        let ciphertext = keypair.pubkey().encrypt_with_opening(amount, &opening);
+
+        // Commitment of the final balance using the same Opening
+        let commitment = PedersenCommitment::new_with_opening(balance - amount, &opening);
+
+        // Compute the final balance
+        let final_balance = source_balance - &ciphertext;
+
+        // Create the proof
+        let proof = CommitmentEqProof::new(&keypair, &final_balance, &opening, balance - amount, &mut t);
+
+        // Regenerate a new transcript for the verification for testing
+        let mut t = Transcript::new(b"test_eq_proof");
+        let mut batch_collector = BatchCollector::default();
+        let res = proof.pre_verify(
+            keypair.pubkey(),
+            &final_balance,
+            &commitment,
+            &mut t,
+            &mut batch_collector,
+        );
+        assert!(res.is_ok());
+        assert!(batch_collector.verify().is_ok());
+    }
+}
