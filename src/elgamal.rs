@@ -66,17 +66,17 @@ impl ECDLPInstance {
         &self.0
     }
 
-    pub fn decode<TS: ecdlp::PrecomputedECDLPTables, R: ecdlp::ProgressReportFunction>(
+    pub fn decode<const L1: usize, R: ecdlp::ProgressReportFunction>(
         &self,
-        precomputed_tables: &TS,
+        precomputed_tables: &ecdlp::ECDLPTablesFileView<'_, L1>,
         args: ecdlp::ECDLPArguments<R>,
     ) -> Option<i64> {
         ecdlp::decode(precomputed_tables, *self.as_point(), args)
     }
 
-    pub fn par_decode<TS: ecdlp::PrecomputedECDLPTables + Sync, R: ecdlp::ProgressReportFunction + Sync>(
+    pub fn par_decode<const L1: usize, R: ecdlp::ProgressReportFunction + Sync>(
         &self,
-        precomputed_tables: &TS,
+        precomputed_tables: &ecdlp::ECDLPTablesFileView<'_, L1>,
         args: ecdlp::ECDLPArguments<R>,
     ) -> Option<i64> {
         ecdlp::par_decode(precomputed_tables, *self.as_point(), args)
