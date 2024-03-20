@@ -348,4 +348,34 @@ mod tests {
         assert!(res.is_ok());
         assert!(batch_collector.verify().is_ok());
     }
+
+    #[test]
+    fn test_ciphertext_proof() {
+        let mut t = Transcript::new(b"test_ciphertext_proof");
+        let bob = ElGamalKeypair::keygen();
+
+        // Generate the commitment
+        let amount = 5u64;
+        let opening = PedersenOpening::generate_new();
+        let commitment = PedersenCommitment::new_with_opening(amount, &opening);
+
+        // Create the receiver handle
+        let bob_handle = bob.pubkey().decrypt_handle(&opening);
+
+        // Create the proof
+        let proof = CiphertextValidityProof::new(bob.pubkey(), amount, &opening, &mut t);
+
+        // Regenerate a new transcript for the verification for testing
+        let mut t = Transcript::new(b"test_ciphertext_proof");
+        let mut batch_collector = BatchCollector::default();
+        let res = proof.pre_verify(
+            &commitment,
+            bob.pubkey(),
+            &bob_handle,
+            &mut t,
+            &mut batch_collector,
+        );
+        assert!(res.is_ok());
+        assert!(batch_collector.verify().is_ok());
+    }
 }
