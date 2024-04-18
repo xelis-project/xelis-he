@@ -1,7 +1,6 @@
 //! Twisted ElGamal implementation.
 
-use std::ops::{Add, AddAssign, Sub, SubAssign};
-
+use crate::{CompressedCiphertext, CompressedPubkey};
 use curve25519_dalek::{
     constants::{RISTRETTO_BASEPOINT_COMPRESSED, RISTRETTO_BASEPOINT_POINT as G},
     ristretto::RistrettoPoint,
@@ -9,10 +8,11 @@ use curve25519_dalek::{
     traits::{Identity, MultiscalarMul},
 };
 use rand::rngs::OsRng;
+use serde::de::Error as SerdeError;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_512};
+use std::ops::{Add, AddAssign, Sub, SubAssign};
 use zeroize::Zeroize;
-use serde::de::Error as SerdeError;
 
 lazy_static::lazy_static! {
     // base point for encoding the commitments opening
@@ -44,7 +44,11 @@ impl Signature {
 }
 
 // Create a Scalar from Public Key, Hash of the message, and selected point
-pub fn hash_and_point_to_scalar(key: &CompressedPubkey, message: &[u8], point: &RistrettoPoint) -> Scalar {
+pub fn hash_and_point_to_scalar(
+    key: &CompressedPubkey,
+    message: &[u8],
+    point: &RistrettoPoint,
+) -> Scalar {
     let mut hasher = Sha3_512::new();
     hasher.update(&key.0);
     hasher.update(message);
@@ -58,8 +62,6 @@ pub fn hash_and_point_to_scalar(key: &CompressedPubkey, message: &[u8], point: &
 pub struct ECDLPInstance(RistrettoPoint);
 
 pub use curve25519_dalek::ecdlp;
-
-use crate::{CompressedCiphertext, CompressedPubkey};
 
 impl ECDLPInstance {
     pub fn as_point(&self) -> &RistrettoPoint {
@@ -130,6 +132,7 @@ pub struct ElGamalSecretKey(Scalar);
 
 impl ElGamalSecretKey {
     pub fn decrypt(&self, ciphertext: &ElGamalCiphertext) -> ECDLPInstance {
+        // m * G = C - s * D
         let point = ciphertext.commitment.as_point() - &(&self.0 * &ciphertext.handle.0);
 
         ECDLPInstance(point)
@@ -424,15 +427,9 @@ mod tests {
         let ct = ElGamalCiphertext::zero();
 
         let point = *keypair.secret().decrypt(&ct).as_point();
-        assert_eq!(
-            point,
-            RistrettoPoint::identity()
-        );
+        assert_eq!(point, RistrettoPoint::identity());
 
-        assert_eq!(
-            point,
-            Scalar::from(0u64) * G
-        );
+        assert_eq!(point, Scalar::from(0u64) * G);
     }
 
     #[test]
