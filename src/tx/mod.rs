@@ -7,9 +7,11 @@ mod verify;
 pub use verify::BlockchainVerificationState;
 
 use crate::{
+    aead::{derive_aead_key_from_ct, AeCipher, PlaintextData},
     compressed::{CompressedCommitment, CompressedHandle, DecompressionError},
     proofs::{CiphertextValidityProof, CommitmentEqProof},
-    CompressedCiphertext, CompressedPubkey, ECDLPInstance, ElGamalSecretKey, Hash, Role,
+    CompressedCiphertext, CompressedPubkey, ECDLPInstance, ElGamalSecretKey,
+    ExtraDataDecryptionError, Hash, Role,
 };
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
@@ -17,7 +19,7 @@ pub struct Transfer {
     pub asset: Hash,
     pub dest_pubkey: CompressedPubkey,
     // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
-    pub extra_data: Option<Vec<u8>>,
+    pub extra_data: Option<AeCipher>,
 
     /// Represents the ciphertext along with `amount_sender_handle` and `amount_receiver_handle`.
     /// The opening is reused for both of the sender and receiver commitments.
@@ -44,6 +46,29 @@ impl Transfer {
         role: Role,
     ) -> Result<ECDLPInstance, DecompressionError> {
         Ok(sk.decrypt(&self.get_ciphertext(role).decompress()?))
+    }
+
+    /// This moves out the `extra_data`.
+    pub fn decrypt_extra_data_in_place(
+        &mut self,
+        sk: &ElGamalSecretKey,
+        role: Role,
+    ) -> Result<Option<PlaintextData>, ExtraDataDecryptionError> {
+        self.extra_data.take().map(|data| {
+            let key = derive_aead_key_from_ct(sk, &self.get_ciphertext(role).decompress()?);
+            Ok(data.decrypt_in_place(&key)?)
+        }).transpose()
+    }
+
+    pub fn decrypt_extra_data(
+        &self,
+        sk: &ElGamalSecretKey,
+        role: Role,
+    ) -> Result<Option<PlaintextData>, ExtraDataDecryptionError> {
+        self.extra_data.clone().map(|data| {
+            let key = derive_aead_key_from_ct(sk, &self.get_ciphertext(role).decompress()?);
+            Ok(data.decrypt(&key)?)
+        }).transpose()
     }
 }
 

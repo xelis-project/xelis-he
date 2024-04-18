@@ -3,6 +3,7 @@ use thiserror::Error;
 #[macro_use]
 pub(crate) mod macros;
 
+mod aead;
 mod compressed;
 mod elgamal;
 pub(crate) mod proofs;
@@ -11,20 +12,16 @@ mod tx;
 
 pub use compressed::{CompressedCiphertext, CompressedPubkey, DecompressionError};
 pub use elgamal::{
-    ecdlp, ECDLPInstance, ElGamalKeypair, Signature,
-    ElGamalPubkey, ElGamalSecretKey, ElGamalCiphertext,
-    PedersenCommitment, DecryptHandle
+    ecdlp, DecryptHandle, ECDLPInstance, ElGamalCiphertext, ElGamalKeypair, ElGamalPubkey,
+    ElGamalSecretKey, PedersenCommitment, Signature,
 };
 pub use transcript::TranscriptError;
-pub use tx::{builder, Transaction, TransactionType, Transfer, SmartContractCall};
+pub use tx::{builder, SmartContractCall, Transaction, TransactionType, Transfer};
 
 pub use tx::BlockchainVerificationState;
 
 // Re-export the curve25519_dalek types
-pub use curve25519_dalek::{
-    ristretto::RistrettoPoint,
-    traits::Identity,
-};
+pub use curve25519_dalek::{ristretto::RistrettoPoint, traits::Identity};
 
 // Replace with a real hash
 #[derive(
@@ -46,6 +43,17 @@ impl Hash {
     pub fn is_zeros(&self) -> bool {
         self.0 == [0; 32]
     }
+}
+
+#[derive(Error, Clone, Debug, Eq, PartialEq)]
+#[error("malformated ciphertext")]
+pub struct CipherFormatError;
+
+#[derive(Error, Clone, Debug, Eq, PartialEq)]
+#[error("transfer extra data decryption error")]
+pub enum ExtraDataDecryptionError {
+    Decompression(#[from] DecompressionError),
+    Format(#[from] CipherFormatError),
 }
 
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
@@ -152,21 +160,17 @@ pub mod realistic_test {
             account: &CompressedPubkey,
             new_nonce: u64,
         ) -> Result<(), Self::Error> {
-            self
-                .accounts
-                .get_mut(account)
-                .unwrap()
-                .nonce = new_nonce;
+            self.accounts.get_mut(account).unwrap().nonce = new_nonce;
             Ok(())
         }
 
         fn set_output_ciphertext(
-                &mut self,
-                _output: &CompressedPubkey,
-                _asset: &Hash,
-                _ct: ElGamalCiphertext,
-            ) -> Result<(), Self::Error> {
-                Ok(())
+            &mut self,
+            _output: &CompressedPubkey,
+            _asset: &Hash,
+            _ct: ElGamalCiphertext,
+        ) -> Result<(), Self::Error> {
+            Ok(())
         }
     }
 
@@ -213,6 +217,8 @@ pub mod realistic_test {
 
 #[cfg(any(test, feature = "test"))]
 pub mod tests {
+    use crate::aead::PlaintextData;
+
     use self::tx::builder::{TransactionBuilder, TransactionTypeBuilder, TransferBuilder};
     use super::realistic_test::*;
     use super::*;
@@ -334,6 +340,85 @@ pub mod tests {
         assert_eq!(
             ledger.get_bal_decrypted(&eve, &Hash([55; 32])),
             RistrettoPoint::mul_base(&Scalar::from(0u64 + 2))
+        );
+    }
+
+    #[test]
+    fn encrypt_extra_data() {
+        let bob = Account::new([(Hash([0; 32]), 100), (Hash([55; 32]), 2)]);
+        let alice = Account::new([(Hash([0; 32]), 0), (Hash([55; 32]), 0)]);
+
+        let ledger = Ledger {
+            accounts: [
+                (bob.keypair.pubkey().compress(), bob.clone()),
+                (alice.keypair.pubkey().compress(), alice.clone()),
+            ]
+            .into(),
+        };
+
+        let bob_pk = bob.keypair.pubkey().compress();
+        let alice_pk = alice.keypair.pubkey().compress();
+
+        let very_secret_message: Vec<u8> =
+            "hi, this is the president talking. i have top secret intel i need to share with you"
+                .into();
+
+        let tx = {
+            let builder = TransactionBuilder {
+                version: 1,
+                source: bob_pk,
+                data: TransactionTypeBuilder::Transfer(vec![TransferBuilder {
+                    dest_pubkey: alice_pk,
+                    amount: 2,
+                    asset: Hash([55; 32]),
+                    extra_data: Some(PlaintextData(very_secret_message.clone())),
+                }]),
+                fee: 10,
+                nonce: 0,
+            };
+            assert_eq!(10, builder.get_transaction_cost(&Hash([0; 32])));
+            assert_eq!(2, builder.get_transaction_cost(&Hash([55; 32])));
+
+            builder
+                .build(
+                    &mut GenerationBalance {
+                        balances: [(Hash([0; 32]), 100), (Hash([55; 32]), 2)].into(),
+                        account: ledger.get_account(&bob_pk).clone(),
+                    },
+                    &ledger.get_account(&bob_pk).keypair,
+                )
+                .unwrap()
+        };
+
+        let TransactionType::Transfer(transfers) = tx.get_data() else {
+            unreachable!()
+        };
+
+        assert_eq!(
+            transfers[0].clone()
+                .decrypt_extra_data_in_place(alice.keypair.secret(), Role::Receiver)
+                .unwrap()
+                .unwrap()
+                .0,
+            very_secret_message
+        );
+
+        assert_eq!(
+            transfers[0].clone()
+                .decrypt_extra_data_in_place(bob.keypair.secret(), Role::Sender)
+                .unwrap()
+                .unwrap()
+                .0,
+            very_secret_message
+        );
+
+        assert_eq!(
+            transfers[0].clone()
+                .decrypt_extra_data(bob.keypair.secret(), Role::Sender)
+                .unwrap()
+                .unwrap()
+                .0,
+            very_secret_message
         );
     }
 

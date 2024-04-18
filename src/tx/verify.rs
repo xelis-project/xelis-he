@@ -91,7 +91,7 @@ impl DecompressedTransferCt {
 
 impl Transaction {
     /// Get the new output ciphertext
-    // This is used to substract the amount from the sender's balance
+    /// This is used to substract the amount from the sender's balance
     fn get_sender_output_ct(
         &self,
         asset: &Hash,

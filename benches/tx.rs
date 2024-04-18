@@ -1,10 +1,10 @@
 use criterion::{criterion_group, criterion_main, Criterion};
+use std::iter;
 use xelis_he::{
     builder::{TransactionBuilder, TransactionTypeBuilder, TransferBuilder},
     realistic_test::*,
     Hash, Transaction,
 };
-use std::iter;
 
 fn n_tx_bench(c: &mut Criterion, n_transfers: usize) {
     let mut group = c.benchmark_group(&format!("Create verify n={n_transfers} transfers"));
@@ -32,7 +32,7 @@ fn n_tx_bench(c: &mut Criterion, n_transfers: usize) {
                     dest_pubkey: alice,
                     amount: 1,
                     asset: Hash([0; 32]),
-                    extra_data: Default::default(),
+                    extra_data: None,
                 })
                 .take(n_transfers)
                 .collect(),

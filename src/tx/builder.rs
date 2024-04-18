@@ -11,6 +11,7 @@ use std::{
 use thiserror::Error;
 
 use crate::{
+    aead::{derive_aead_key_from_opening, PlaintextData},
     elgamal::{DecryptHandle, ElGamalCiphertext, PedersenCommitment, PedersenOpening},
     proofs::{CiphertextValidityProof, CommitmentEqProof, BP_GENS, PC_GENS},
     transcript::ProtocolTranscript,
@@ -60,9 +61,9 @@ pub struct SmartContractCallBuilder {
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct TransferBuilder {
     pub asset: Hash,
-    pub amount: u64,
+    pub amount: u64, // FIXME: should be zeroized
     pub dest_pubkey: CompressedPubkey,
-    pub extra_data: Option<Vec<u8>>, // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
+    pub extra_data: Option<PlaintextData>, // TODO: size limits
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
@@ -324,6 +325,12 @@ impl TransactionBuilder {
                     range_proof_values.push(transfer.inner.amount);
                     range_proof_openings.push(transfer.amount_opening.as_scalar());
 
+                    // encrypt extra data
+                    let extra_data = transfer.inner.extra_data.map(|data| {
+                        let k = derive_aead_key_from_opening(&transfer.amount_opening);
+                        data.encrypt_in_place(&k)
+                    });
+
                     Transfer {
                         amount_commitment,
                         amount_receiver_handle,
@@ -331,7 +338,7 @@ impl TransactionBuilder {
                         dest_pubkey: transfer.inner.dest_pubkey,
                         asset: transfer.inner.asset,
                         ct_validity_proof,
-                        extra_data: transfer.inner.extra_data,
+                        extra_data,
                     }
                 })
                 .collect::<Vec<_>>();
