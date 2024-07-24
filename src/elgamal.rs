@@ -24,7 +24,7 @@ lazy_static::lazy_static! {
     };
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Signature {
     s: Scalar,
     e: Scalar,

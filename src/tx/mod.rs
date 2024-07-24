@@ -7,11 +7,11 @@ mod verify;
 pub use verify::BlockchainVerificationState;
 
 use crate::{
-    aead::{derive_aead_key_from_ct, AeCipher, PlaintextData},
+    extra_data::{ExtraData, PlaintextData},
     compressed::{CompressedCommitment, CompressedHandle, DecompressionError},
     proofs::{CiphertextValidityProof, CommitmentEqProof},
     CompressedCiphertext, CompressedPubkey, ECDLPInstance, ElGamalSecretKey,
-    ExtraDataDecryptionError, Hash, Role,
+    ExtraDataDecryptionError, Hash, Role, Signature,
 };
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
@@ -19,7 +19,7 @@ pub struct Transfer {
     pub asset: Hash,
     pub dest_pubkey: CompressedPubkey,
     // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
-    pub extra_data: Option<AeCipher>,
+    pub extra_data: Option<ExtraData>,
 
     /// Represents the ciphertext along with `amount_sender_handle` and `amount_receiver_handle`.
     /// The opening is reused for both of the sender and receiver commitments.
@@ -55,8 +55,7 @@ impl Transfer {
         role: Role,
     ) -> Result<Option<PlaintextData>, ExtraDataDecryptionError> {
         self.extra_data.take().map(|data| {
-            let key = derive_aead_key_from_ct(sk, &self.get_ciphertext(role).decompress()?);
-            Ok(data.decrypt_in_place(&key)?)
+            Ok(data.decrypt_in_place(&sk, role)?)
         }).transpose()
     }
 
@@ -66,8 +65,7 @@ impl Transfer {
         role: Role,
     ) -> Result<Option<PlaintextData>, ExtraDataDecryptionError> {
         self.extra_data.clone().map(|data| {
-            let key = derive_aead_key_from_ct(sk, &self.get_ciphertext(role).decompress()?);
-            Ok(data.decrypt(&key)?)
+            Ok(data.decrypt_in_place(&sk, role)?)
         }).transpose()
     }
 }
@@ -105,7 +103,7 @@ pub struct Transaction {
     data: TransactionType,
     fee: u64,
     nonce: u64,
-    // signature: Signature,
+    signature: Signature,
     /// We have one source_commitment and equality proof per asset used in the tx.
     new_source_commitments: Vec<NewSourceCommitment>,
     /// The range proof is aggregated across all transfers and across all assets.

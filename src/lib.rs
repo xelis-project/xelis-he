@@ -3,7 +3,7 @@ use thiserror::Error;
 #[macro_use]
 pub(crate) mod macros;
 
-mod aead;
+mod extra_data;
 mod compressed;
 mod elgamal;
 pub(crate) mod proofs;
@@ -217,7 +217,7 @@ pub mod realistic_test {
 
 #[cfg(any(test, feature = "test"))]
 pub mod tests {
-    use crate::aead::PlaintextData;
+    use crate::extra_data::PlaintextData;
 
     use self::tx::builder::{TransactionBuilder, TransactionTypeBuilder, TransferBuilder};
     use super::realistic_test::*;

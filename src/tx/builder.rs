@@ -11,13 +11,21 @@ use std::{
 use thiserror::Error;
 
 use crate::{
-    aead::{derive_aead_key_from_opening, PlaintextData},
     elgamal::{DecryptHandle, ElGamalCiphertext, PedersenCommitment, PedersenOpening},
+    extra_data::{ExtraData, PlaintextData},
     proofs::{CiphertextValidityProof, CommitmentEqProof, BP_GENS, PC_GENS},
     transcript::ProtocolTranscript,
     tx::NewSourceCommitment,
-    CompressedCiphertext, CompressedPubkey, ElGamalKeypair, ElGamalPubkey, Hash,
-    ProofGenerationError, Role, Transaction, TransactionType, Transfer,
+    CompressedCiphertext,
+    CompressedPubkey,
+    ElGamalKeypair,
+    ElGamalPubkey,
+    Hash,
+    ProofGenerationError,
+    Role,
+    Transaction,
+    TransactionType,
+    Transfer
 };
 
 use super::SmartContractCall;
@@ -93,6 +101,90 @@ impl TransferWithCommitment {
         };
 
         ElGamalCiphertext::new(self.amount_commitment.clone(), handle)
+    }
+}
+
+// Used to build the final transaction
+// by signing it
+struct TransactionSigner {
+    version: u8,
+    source: CompressedPubkey,
+    data: TransactionType,
+    fee: u64,
+    nonce: u64,
+    source_commitments: Vec<NewSourceCommitment>,
+    range_proof: RangeProof,
+}
+
+impl TransactionSigner {
+
+    // TODO: do better
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+
+        bytes.extend_from_slice(&self.version.to_be_bytes());
+        bytes.extend_from_slice(&self.source.0);
+        bytes.extend_from_slice(&self.fee.to_be_bytes());
+        bytes.extend_from_slice(&self.nonce.to_be_bytes());
+
+        match &self.data {
+            TransactionType::Transfer(transfers) => {
+                for transfer in transfers {
+                    bytes.extend_from_slice(&transfer.asset.0);
+                    bytes.extend_from_slice(&transfer.amount_commitment.0);
+                    bytes.extend_from_slice(&transfer.amount_sender_handle.0);
+                    bytes.extend_from_slice(&transfer.amount_receiver_handle.0);
+                    bytes.extend_from_slice(&transfer.dest_pubkey.0);
+                    if let Some(extra_data) = &transfer.extra_data {
+                        bytes.extend_from_slice(&extra_data.to_bytes());
+                    }
+                }
+            }
+            TransactionType::Burn { asset, amount } => {
+                bytes.extend_from_slice(&asset.0);
+                bytes.extend_from_slice(&amount.to_be_bytes());
+            }
+            TransactionType::CallContract(SmartContractCall { contract, assets, params }) => {
+                bytes.extend_from_slice(&contract.0);
+                for (asset, amount) in assets {
+                    bytes.extend_from_slice(&asset.0);
+                    bytes.extend_from_slice(&amount.to_be_bytes());
+                }
+                for (key, value) in params {
+                    bytes.extend_from_slice(key.as_bytes());
+                    bytes.extend_from_slice(value.as_bytes());
+                }
+            }
+            TransactionType::DeployContract(code) => {
+                bytes.extend_from_slice(code.as_bytes());
+            }
+        }
+
+        bytes.extend_from_slice(&self.range_proof.to_bytes());
+
+        for commitment in &self.source_commitments {
+            bytes.extend_from_slice(&commitment.asset.0);
+            bytes.extend_from_slice(&commitment.new_source_commitment.0);
+            // bytes.extend_from_slice(&commitment.new_commitment_eq_proof);
+        }
+
+        bytes
+    }
+
+    pub fn sign(self, keypair: &ElGamalKeypair) -> Transaction {
+        let bytes = self.to_bytes();
+        let signature = keypair.sign(&bytes);
+
+        Transaction {
+            version: self.version,
+            source: self.source,
+            data: self.data,
+            fee: self.fee,
+            nonce: self.nonce,
+            new_source_commitments: self.source_commitments,
+            range_proof: self.range_proof,
+            signature,
+        }
     }
 }
 
@@ -327,8 +419,7 @@ impl TransactionBuilder {
 
                     // encrypt extra data
                     let extra_data = transfer.inner.extra_data.map(|data| {
-                        let k = derive_aead_key_from_opening(&transfer.amount_opening);
-                        data.encrypt_in_place(&k)
+                        ExtraData::new(data, source_keypair.pubkey(), &transfer.dest_pubkey)
                     });
 
                     Transfer {
@@ -388,14 +479,14 @@ impl TransactionBuilder {
         )
         .map_err(ProofGenerationError::from)?;
 
-        Ok(Transaction {
+        Ok(TransactionSigner {
             version: self.version,
             source: self.source,
             data,
             fee: self.fee,
             nonce: self.nonce,
+            source_commitments: new_source_commitments,
             range_proof,
-            new_source_commitments,
-        })
+        }.sign(source_keypair))
     }
 }
