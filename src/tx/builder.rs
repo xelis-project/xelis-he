@@ -49,14 +49,11 @@ pub trait GetBlockchainAccountBalance {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[serde(rename_all = "snake_case")]
 pub enum TransactionTypeBuilder {
-    #[serde(rename = "transfers")]
-    Transfer(Vec<TransferBuilder>),
-    #[serde(rename = "burn")]
+    Transfers(Vec<TransferBuilder>),
     Burn { asset: Hash, amount: u64 },
-    #[serde(rename = "call_contract")]
     CallContract(SmartContractCallBuilder),
-    #[serde(rename = "deploy_contract")]
     DeployContract(String), // represent the code to deploy
 }
 
@@ -131,13 +128,15 @@ impl TransactionSigner {
             TransactionType::Transfer(transfers) => {
                 for transfer in transfers {
                     bytes.extend_from_slice(&transfer.asset.0);
+                    bytes.extend_from_slice(&transfer.dest_pubkey.0);
                     bytes.extend_from_slice(&transfer.amount_commitment.0);
                     bytes.extend_from_slice(&transfer.amount_sender_handle.0);
                     bytes.extend_from_slice(&transfer.amount_receiver_handle.0);
-                    bytes.extend_from_slice(&transfer.dest_pubkey.0);
                     if let Some(extra_data) = &transfer.extra_data {
                         bytes.extend_from_slice(&extra_data.to_bytes());
                     }
+
+                    bytes.extend_from_slice(&transfer.ct_validity_proof.to_bytes());
                 }
             }
             TransactionType::Burn { asset, amount } => {
@@ -165,7 +164,7 @@ impl TransactionSigner {
         for commitment in &self.source_commitments {
             bytes.extend_from_slice(&commitment.asset.0);
             bytes.extend_from_slice(&commitment.new_source_commitment.0);
-            // bytes.extend_from_slice(&commitment.new_commitment_eq_proof);
+            bytes.extend_from_slice(&commitment.new_commitment_eq_proof.to_bytes());
         }
 
         bytes
@@ -201,7 +200,7 @@ impl TransactionBuilder {
         }
 
         match &self.data {
-            TransactionTypeBuilder::Transfer(_) => {
+            TransactionTypeBuilder::Transfers(_) => {
                 for transfer in transfers {
                     if &transfer.inner.asset == asset {
                         ct -= transfer.get_ciphertext(Role::Sender);
@@ -221,7 +220,7 @@ impl TransactionBuilder {
                     ct -= Scalar::from(amount)
                 }
             }
-            TransactionTypeBuilder::DeployContract(_) => todo!(),
+            _ => (),
         }
 
         ct
@@ -237,7 +236,7 @@ impl TransactionBuilder {
         }
 
         match &self.data {
-            TransactionTypeBuilder::Transfer(transfers) => {
+            TransactionTypeBuilder::Transfers(transfers) => {
                 for transfer in transfers {
                     if &transfer.asset == asset {
                         cost += transfer.amount;
@@ -257,7 +256,7 @@ impl TransactionBuilder {
                     cost += amount
                 }
             }
-            TransactionTypeBuilder::DeployContract(_) => todo!(),
+            _ => (),
         }
 
         cost
@@ -270,7 +269,7 @@ impl TransactionBuilder {
         consumed.insert(Hash::default());
 
         match &self.data {
-            TransactionTypeBuilder::Transfer(transfers) => {
+            TransactionTypeBuilder::Transfers(transfers) => {
                 for transfer in transfers {
                     consumed.insert(transfer.asset.clone());
                 }
@@ -296,7 +295,7 @@ impl TransactionBuilder {
 
         let used_assets = self.used_assets();
 
-        let transfers = if let TransactionTypeBuilder::Transfer(transfers) = &mut self.data {
+        let transfers = if let TransactionTypeBuilder::Transfers(transfers) = &mut self.data {
             transfers
                 .iter()
                 .map(|transfer| {
@@ -348,7 +347,7 @@ impl TransactionBuilder {
             })
             .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
 
-        let new_source_commitments = used_assets
+        let source_commitments = used_assets
             .into_iter()
             .zip(&range_proof_openings)
             .zip(&range_proof_values)
@@ -390,53 +389,70 @@ impl TransactionBuilder {
             })
             .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
 
-        let transfers = if let TransactionTypeBuilder::Transfer(_) = &mut self.data {
-            range_proof_values.reserve(transfers.len());
-            range_proof_openings.reserve(transfers.len());
+        let data = match self.data {
+            TransactionTypeBuilder::Transfers(_) => {
+                range_proof_values.reserve(transfers.len());
+                range_proof_openings.reserve(transfers.len());
+    
+                let transfers = transfers
+                    .into_iter()
+                    .map(|transfer| {
+                        let amount_commitment = transfer.amount_commitment.compress();
+                        let amount_sender_handle = transfer.amount_sender_handle.compress();
+                        let amount_receiver_handle = transfer.amount_receiver_handle.compress();
+    
+                        transcript.transfer_proof_domain_separator();
+                        transcript.append_pubkey(b"dest_pubkey", &transfer.inner.dest_pubkey);
+                        transcript.append_commitment(b"amount_commitment", &amount_commitment);
+                        transcript.append_handle(b"amount_sender_handle", &amount_sender_handle);
+                        transcript.append_handle(b"amount_receiver_handle", &amount_receiver_handle);
+    
+                        let ct_validity_proof = CiphertextValidityProof::new(
+                            &transfer.dest_pubkey,
+                            transfer.inner.amount,
+                            &transfer.amount_opening,
+                            &mut transcript,
+                        );
+    
+                        range_proof_values.push(transfer.inner.amount);
+                        range_proof_openings.push(transfer.amount_opening.as_scalar());
+    
+                        // encrypt extra data
+                        let extra_data = transfer.inner.extra_data.map(|data| {
+                            ExtraData::new(data, source_keypair.pubkey(), &transfer.dest_pubkey)
+                        });
+    
+                        Transfer {
+                            amount_commitment,
+                            amount_receiver_handle,
+                            amount_sender_handle,
+                            dest_pubkey: transfer.inner.dest_pubkey,
+                            asset: transfer.inner.asset,
+                            ct_validity_proof,
+                            extra_data,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+    
+                TransactionType::Transfer(transfers)
+            },
+            TransactionTypeBuilder::Burn { amount, asset } => {
+                transcript.burn_proof_domain_separator();
+                transcript.append_hash(b"asset", &asset);
+                transcript.append_u64(b"amount", amount);
 
-            let transfers = transfers
-                .into_iter()
-                .map(|transfer| {
-                    let amount_commitment = transfer.amount_commitment.compress();
-                    let amount_sender_handle = transfer.amount_sender_handle.compress();
-                    let amount_receiver_handle = transfer.amount_receiver_handle.compress();
-
-                    transcript.transfer_proof_domain_separator();
-                    transcript.append_pubkey(b"dest_pubkey", &transfer.inner.dest_pubkey);
-                    transcript.append_commitment(b"amount_commitment", &amount_commitment);
-                    transcript.append_handle(b"amount_sender_handle", &amount_sender_handle);
-                    transcript.append_handle(b"amount_receiver_handle", &amount_receiver_handle);
-
-                    let ct_validity_proof = CiphertextValidityProof::new(
-                        &transfer.dest_pubkey,
-                        transfer.inner.amount,
-                        &transfer.amount_opening,
-                        &mut transcript,
-                    );
-
-                    range_proof_values.push(transfer.inner.amount);
-                    range_proof_openings.push(transfer.amount_opening.as_scalar());
-
-                    // encrypt extra data
-                    let extra_data = transfer.inner.extra_data.map(|data| {
-                        ExtraData::new(data, source_keypair.pubkey(), &transfer.dest_pubkey)
-                    });
-
-                    Transfer {
-                        amount_commitment,
-                        amount_receiver_handle,
-                        amount_sender_handle,
-                        dest_pubkey: transfer.inner.dest_pubkey,
-                        asset: transfer.inner.asset,
-                        ct_validity_proof,
-                        extra_data,
-                    }
-                })
-                .collect::<Vec<_>>();
-
-            transfers
-        } else {
-            vec![]
+                TransactionType::Burn { amount, asset }
+            },
+            TransactionTypeBuilder::CallContract(SmartContractCallBuilder {
+                assets,
+                contract,
+                params,
+            }) => TransactionType::CallContract(SmartContractCall {
+                assets,
+                contract,
+                params,
+            }),
+            TransactionTypeBuilder::DeployContract(c) => TransactionType::DeployContract(c),
         };
 
         let n_commitments = range_proof_values.len();
@@ -449,23 +465,6 @@ impl TransactionBuilder {
 
         range_proof_values.extend(iter::repeat(0u64).take(n_dud_commitments));
         range_proof_openings.extend(iter::repeat(Scalar::ZERO).take(n_dud_commitments));
-
-        let data = match self.data {
-            TransactionTypeBuilder::Transfer(_) => TransactionType::Transfer(transfers),
-            TransactionTypeBuilder::Burn { amount, asset } => {
-                TransactionType::Burn { amount, asset }
-            }
-            TransactionTypeBuilder::CallContract(SmartContractCallBuilder {
-                assets,
-                contract,
-                params,
-            }) => TransactionType::CallContract(SmartContractCall {
-                assets,
-                contract,
-                params,
-            }),
-            TransactionTypeBuilder::DeployContract(c) => TransactionType::DeployContract(c),
-        };
 
         // 3. Create the RangeProof
 
@@ -485,7 +484,7 @@ impl TransactionBuilder {
             data,
             fee: self.fee,
             nonce: self.nonce,
-            source_commitments: new_source_commitments,
+            source_commitments,
             range_proof,
         }.sign(source_keypair))
     }

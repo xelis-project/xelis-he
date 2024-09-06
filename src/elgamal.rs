@@ -41,6 +41,13 @@ impl Signature {
         let calculated = hash_and_point_to_scalar(&key.compress(), message, &r);
         self.e == calculated
     }
+
+    pub fn to_bytes(&self) -> [u8; 64] {
+        let mut bytes = [0u8; 64];
+        bytes[..32].copy_from_slice(&self.s.to_bytes());
+        bytes[32..].copy_from_slice(&self.e.to_bytes());
+        bytes
+    }
 }
 
 // Create a Scalar from Public Key, Hash of the message, and selected point

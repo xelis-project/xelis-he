@@ -238,7 +238,10 @@ impl Transaction {
             Self::prepare_transcript(self.version, &self.source, self.fee, self.nonce);
 
         // 0. Verify Signature
-        // TODO
+        let bytes = self.to_bytes();
+        if !self.signature.verify(&bytes, &owner) {
+            return Err(VerificationError::Proof(ProofVerificationError::Signature));
+        }
 
         // 1. Verify CommitmentEqProofs
 
@@ -290,54 +293,62 @@ impl Transaction {
         }
 
         // 2. Verify every CtValidityProof
-        if let TransactionType::Transfer(transfers) = &self.data {
-            for (transfer, decompressed) in transfers.iter().zip(&transfers_decompressed) {
-                let receiver = transfer
-                    .dest_pubkey
-                    .decompress()
-                    .map_err(ProofVerificationError::from)?;
-
-                // Update receiver balance
-
-                let current_balance = state
-                    .get_account_balance(
-                        &transfer.dest_pubkey,
-                        &transfer.asset,
-                        Role::Receiver
-                    )
-                    .map_err(VerificationError::State)?
-                    .decompress()
-                    .map_err(ProofVerificationError::from)?;
-
-                let receiver_ct = decompressed.get_ciphertext(Role::Receiver);
-                let receiver_new_balance = current_balance + receiver_ct;
-
-                state
-                    .update_account_balance(
-                        &transfer.dest_pubkey,
-                        &transfer.asset,
-                        receiver_new_balance.compress(),
-                        Role::Receiver,
-                    )
-                    .map_err(VerificationError::State)?;
-
-                // Validity proof
-
-                transcript.transfer_proof_domain_separator();
-                transcript.append_pubkey(b"dest_pubkey", &transfer.dest_pubkey);
-                transcript.append_commitment(b"amount_commitment", &transfer.amount_commitment);
-                transcript.append_handle(b"amount_sender_handle", &transfer.amount_sender_handle);
-                transcript
-                    .append_handle(b"amount_receiver_handle", &transfer.amount_receiver_handle);
-
-                transfer.ct_validity_proof.pre_verify(
-                    &decompressed.amount_commitment,
-                    &receiver,
-                    &decompressed.amount_receiver_handle,
-                    &mut transcript,
-                    sigma_batch_collector,
-                )?;
+        match &self.data {
+            TransactionType::Transfer(transfers) => {
+                for (transfer, decompressed) in transfers.iter().zip(&transfers_decompressed) {
+                    let receiver = transfer
+                        .dest_pubkey
+                        .decompress()
+                        .map_err(ProofVerificationError::from)?;
+    
+                    // Update receiver balance
+    
+                    let current_balance = state
+                        .get_account_balance(
+                            &transfer.dest_pubkey,
+                            &transfer.asset,
+                            Role::Receiver
+                        )
+                        .map_err(VerificationError::State)?
+                        .decompress()
+                        .map_err(ProofVerificationError::from)?;
+    
+                    let receiver_ct = decompressed.get_ciphertext(Role::Receiver);
+                    let receiver_new_balance = current_balance + receiver_ct;
+    
+                    state
+                        .update_account_balance(
+                            &transfer.dest_pubkey,
+                            &transfer.asset,
+                            receiver_new_balance.compress(),
+                            Role::Receiver,
+                        )
+                        .map_err(VerificationError::State)?;
+    
+                    // Validity proof
+    
+                    transcript.transfer_proof_domain_separator();
+                    transcript.append_pubkey(b"dest_pubkey", &transfer.dest_pubkey);
+                    transcript.append_commitment(b"amount_commitment", &transfer.amount_commitment);
+                    transcript.append_handle(b"amount_sender_handle", &transfer.amount_sender_handle);
+                    transcript
+                        .append_handle(b"amount_receiver_handle", &transfer.amount_receiver_handle);
+    
+                    transfer.ct_validity_proof.pre_verify(
+                        &decompressed.amount_commitment,
+                        &receiver,
+                        &decompressed.amount_receiver_handle,
+                        &mut transcript,
+                        sigma_batch_collector,
+                    )?;
+                }
+            },
+            TransactionType::Burn { asset, amount } => {
+                transcript.burn_proof_domain_separator();
+                transcript.append_hash(b"asset", asset);
+                transcript.append_u64(b"amount", *amount);
             }
+            _ => ()
         }
 
         // Prepare the new source commitments
@@ -521,5 +532,58 @@ impl Transaction {
         }
     
         Ok(())
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&self.version.to_be_bytes());
+        bytes.extend_from_slice(&self.source.0);
+        bytes.extend_from_slice(&self.fee.to_be_bytes());
+        bytes.extend_from_slice(&self.nonce.to_be_bytes());
+
+        match &self.data {
+            TransactionType::Transfer(transfers) => {
+                for transfer in transfers {
+                    bytes.extend_from_slice(&transfer.asset.0);
+                    bytes.extend_from_slice(&transfer.dest_pubkey.0);
+                    bytes.extend_from_slice(&transfer.amount_commitment.0);
+                    bytes.extend_from_slice(&transfer.amount_sender_handle.0);
+                    bytes.extend_from_slice(&transfer.amount_receiver_handle.0);
+                    if let Some(extra_data) = &transfer.extra_data {
+                        bytes.extend_from_slice(&extra_data.to_bytes());
+                    }
+
+                    bytes.extend_from_slice(&transfer.ct_validity_proof.to_bytes());
+                }
+            }
+            TransactionType::Burn { asset, amount } => {
+                bytes.extend_from_slice(&asset.0);
+                bytes.extend_from_slice(&amount.to_be_bytes());
+            }
+            TransactionType::CallContract(SmartContractCall { contract, assets, params }) => {
+                bytes.extend_from_slice(&contract.0);
+                for (asset, amount) in assets {
+                    bytes.extend_from_slice(&asset.0);
+                    bytes.extend_from_slice(&amount.to_be_bytes());
+                }
+                for (key, value) in params {
+                    bytes.extend_from_slice(key.as_bytes());
+                    bytes.extend_from_slice(value.as_bytes());
+                }
+            },
+            TransactionType::DeployContract(contract) => {
+                bytes.extend_from_slice(&contract.as_bytes());
+            }
+        }
+
+        bytes.extend_from_slice(self.range_proof.to_bytes().as_slice());
+
+        for commitment in &self.new_source_commitments {
+            bytes.extend_from_slice(&commitment.asset.0);
+            bytes.extend_from_slice(&commitment.new_source_commitment.0);
+            bytes.extend_from_slice(&commitment.new_commitment_eq_proof.to_bytes());
+        }
+
+        bytes
     }
 }

@@ -70,6 +70,8 @@ pub enum ProofGenerationError {
 
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
 pub enum ProofVerificationError {
+    #[error("invalid signature")]
+    Signature,
     #[error("invalid format: {0}")]
     Decompression(#[from] DecompressionError),
     #[error("commitment equality proof verification failed")]
@@ -247,7 +249,7 @@ pub mod tests {
             let builder = TransactionBuilder {
                 version: 1,
                 source: bob,
-                data: TransactionTypeBuilder::Transfer(vec![
+                data: TransactionTypeBuilder::Transfers(vec![
                     TransferBuilder {
                         dest_pubkey: alice,
                         amount: 52,
@@ -288,7 +290,7 @@ pub mod tests {
             let builder = TransactionBuilder {
                 version: 1,
                 source: alice,
-                data: TransactionTypeBuilder::Transfer(vec![TransferBuilder {
+                data: TransactionTypeBuilder::Transfers(vec![TransferBuilder {
                     dest_pubkey: eve,
                     amount: 30,
                     asset: Hash([0; 32]),
@@ -367,7 +369,7 @@ pub mod tests {
             let builder = TransactionBuilder {
                 version: 1,
                 source: bob_pk,
-                data: TransactionTypeBuilder::Transfer(vec![TransferBuilder {
+                data: TransactionTypeBuilder::Transfers(vec![TransferBuilder {
                     dest_pubkey: alice_pk,
                     amount: 2,
                     asset: Hash([55; 32]),
@@ -442,7 +444,7 @@ pub mod tests {
             let builder = TransactionBuilder {
                 version: 1,
                 source: bob,
-                data: TransactionTypeBuilder::Transfer(vec![TransferBuilder {
+                data: TransactionTypeBuilder::Transfers(vec![TransferBuilder {
                     dest_pubkey: alice,
                     amount: 2,
                     asset: Hash([55; 32]),

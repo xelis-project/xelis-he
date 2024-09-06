@@ -27,7 +27,7 @@ fn n_tx_bench(c: &mut Criterion, n_transfers: usize) {
         let builder = TransactionBuilder {
             version: 1,
             source: bob,
-            data: TransactionTypeBuilder::Transfer(
+            data: TransactionTypeBuilder::Transfers(
                 iter::repeat_with(|| TransferBuilder {
                     dest_pubkey: alice,
                     amount: 1,
@@ -146,7 +146,7 @@ fn batching_bench_util(c: &mut Criterion, batch_size: usize) {
             let builder = TransactionBuilder {
                 version: 1,
                 source: bob,
-                data: TransactionTypeBuilder::Transfer(vec![TransferBuilder {
+                data: TransactionTypeBuilder::Transfers(vec![TransferBuilder {
                     dest_pubkey: alice,
                     amount: 1,
                     asset: Hash([0; 32]),

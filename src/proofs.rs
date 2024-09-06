@@ -199,6 +199,17 @@ impl CommitmentEqProof {
 
         Ok(())
     }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&self.Y_0.to_bytes());
+        bytes.extend_from_slice(&self.Y_1.to_bytes());
+        bytes.extend_from_slice(&self.Y_2.to_bytes());
+        bytes.extend_from_slice(&self.z_s.to_bytes());
+        bytes.extend_from_slice(&self.z_x.to_bytes());
+        bytes.extend_from_slice(&self.z_r.to_bytes());
+        bytes
+    }
 }
 
 #[allow(non_snake_case)]
@@ -305,6 +316,15 @@ impl CiphertextValidityProof {
         ]);
 
         Ok(())
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&self.Y_0.to_bytes());
+        bytes.extend_from_slice(&self.Y_1.to_bytes());
+        bytes.extend_from_slice(&self.z_r.to_bytes());
+        bytes.extend_from_slice(&self.z_x.to_bytes());
+        bytes
     }
 }
 
