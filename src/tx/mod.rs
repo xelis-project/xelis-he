@@ -88,24 +88,24 @@ pub enum TransactionType {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-struct NewSourceCommitment {
-    new_source_commitment: CompressedCommitment,
-    new_commitment_eq_proof: CommitmentEqProof,
-    asset: Hash,
+pub(crate) struct NewSourceCommitment {
+    pub(crate) new_source_commitment: CompressedCommitment,
+    pub(crate) new_commitment_eq_proof: CommitmentEqProof,
+    pub(crate) asset: Hash,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Transaction {
-    version: u8,
-    source: CompressedPubkey,
-    data: TransactionType,
-    fee: u64,
-    nonce: u64,
-    signature: Signature,
+    pub(crate) version: u8,
+    pub(crate) source: CompressedPubkey,
+    pub(crate) data: TransactionType,
+    pub(crate) fee: u64,
+    pub(crate) nonce: u64,
+    pub(crate) signature: Signature,
     /// We have one source_commitment and equality proof per asset used in the tx.
-    new_source_commitments: Vec<NewSourceCommitment>,
+    pub(crate) new_source_commitments: Vec<NewSourceCommitment>,
     /// The range proof is aggregated across all transfers and across all assets.
-    range_proof: RangeProof,
+    pub(crate) range_proof: RangeProof,
 }
 
 impl Transaction {

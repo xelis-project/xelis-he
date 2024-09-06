@@ -94,19 +94,13 @@ pub enum Role {
     Receiver,
 }
 
-#[cfg(any(test, feature = "test"))]
-pub mod tests {
+pub mod mock {
     use super::*;
     use self::{
-        extra_data::PlaintextData,
         builder::GetBlockchainAccountBalance,
-        tx::{
-            builder::{TransactionBuilder, TransactionTypeBuilder, TransferBuilder},
-            BlockchainVerificationState
-        }
+        tx::BlockchainVerificationState
     };
-
-    use curve25519_dalek::{RistrettoPoint, Scalar};
+    use curve25519_dalek::RistrettoPoint;
     use std::collections::HashMap;
 
     #[derive(Debug, Clone)]
@@ -221,6 +215,230 @@ pub mod tests {
                 keypair,
                 nonce: 0,
             }
+        }
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use self::{
+        extra_data::PlaintextData,
+        tx::builder::{TransactionBuilder, TransactionTypeBuilder, TransferBuilder}
+    };
+    use mock::*;
+    use curve25519_dalek::{RistrettoPoint, Scalar};
+
+    #[test]
+    fn test_burn() {
+        let alice = Account::new([(Hash([0; 32]), 100)]);
+        let tx = {
+            let builder = TransactionBuilder {
+                version: 1,
+                source: alice.keypair.pubkey().compress(),
+                data: TransactionTypeBuilder::Burn {
+                    asset: Hash([0; 32]),
+                    amount: 10,
+                },
+                fee: 1,
+                nonce: 0,
+            };
+
+            assert_eq!(11, builder.get_transaction_cost(&Hash([0; 32])));
+            assert_eq!(1, builder.used_assets().len());
+
+            builder
+                .build(
+                    &mut GenerationBalance {
+                        balances: [(Hash([0; 32]), 100)].into(),
+                        account: alice.clone(),
+                    },
+                    &alice.keypair,
+                )
+                .unwrap()
+        };
+
+        let mut ledger = Ledger {
+            accounts: [(alice.keypair.pubkey().compress(), alice.clone())].into()
+        };
+
+        Transaction::verify_batch(&vec![tx], &mut ledger).unwrap();
+
+        assert_eq!(
+            ledger.get_bal_decrypted(&alice.keypair.pubkey().compress(), &Hash([0; 32])),
+            // 10 for burn and 1 for fee
+            RistrettoPoint::mul_base(&Scalar::from(100u64 - 11))
+        );
+    }
+
+    #[test]
+    fn test_burn_non_native_asset() {
+        let alice = Account::new([(Hash([0; 32]), 1), (Hash([55; 32]), 50)]);
+        let tx = {
+            let builder = TransactionBuilder {
+                version: 1,
+                source: alice.keypair.pubkey().compress(),
+                data: TransactionTypeBuilder::Burn {
+                    asset: Hash([55; 32]),
+                    amount: 50,
+                },
+                fee: 1,
+                nonce: 0,
+            };
+
+            assert_eq!(1, builder.get_transaction_cost(&Hash([0; 32])));
+            assert_eq!(50, builder.get_transaction_cost(&Hash([55; 32])));
+
+            builder
+                .build(
+                    &mut GenerationBalance {
+                        balances: [(Hash([0; 32]), 1), (Hash([55; 32]), 50)].into(),
+                        account: alice.clone(),
+                    },
+                    &alice.keypair,
+                )
+                .unwrap()
+        };
+
+        let mut ledger = Ledger {
+            accounts: [(alice.keypair.pubkey().compress(), alice.clone())].into()
+        };
+
+        Transaction::verify_batch(&vec![tx], &mut ledger).unwrap();
+
+        assert_eq!(
+            ledger.get_bal_decrypted(&alice.keypair.pubkey().compress(), &Hash([0; 32])),
+            // - 1 for fee
+            RistrettoPoint::mul_base(&Scalar::from(0u64))
+        );
+        assert_eq!(
+            ledger.get_bal_decrypted(&alice.keypair.pubkey().compress(), &Hash([55; 32])),
+            // 50-50 for burn
+            RistrettoPoint::mul_base(&Scalar::from(0u64))
+        );
+    }
+
+    #[test]
+    fn test_invalid_burn() {
+        let alice = Account::new([(Hash([0; 32]), 100)]);
+        let mut tx = {
+            let builder = TransactionBuilder {
+                version: 1,
+                source: alice.keypair.pubkey().compress(),
+                data: TransactionTypeBuilder::Burn {
+                    asset: Hash([0; 32]),
+                    amount: 100,
+                },
+                fee: 0,
+                nonce: 0,
+            };
+
+            builder
+                .build(
+                    &mut GenerationBalance {
+                        balances: [(Hash([0; 32]), 100)].into(),
+                        account: alice.clone(),
+                    },
+                    &alice.keypair,
+                )
+                .unwrap()
+        };
+
+        let ledger = Ledger {
+            accounts: [(alice.keypair.pubkey().compress(), alice.clone())].into()
+        };
+
+        assert!(Transaction::verify(&tx, &mut ledger.clone()).is_ok());
+
+        // Change burn amount
+        tx.data = TransactionType::Burn {
+            asset: Hash([0; 32]),
+            amount: 101,
+        };
+
+        assert!(Transaction::verify(&tx, &mut ledger.clone()).is_err());
+
+        // Change burn asset
+        tx.data = TransactionType::Burn {
+            asset: Hash([1; 32]),
+            amount: 100,
+        };
+
+        assert!(Transaction::verify(&tx, &mut ledger.clone()).is_err());
+    }
+
+    #[test]
+    fn test_invalid_transfer_tx() {
+        let alice = Account::new([(Hash([0; 32]), 100)]);
+        let tx = {
+            let builder = TransactionBuilder {
+                version: 1,
+                source: alice.keypair.pubkey().compress(),
+                data: TransactionTypeBuilder::Burn {
+                    asset: Hash([0; 32]),
+                    amount: 10,
+                },
+                fee: 1,
+                nonce: 0,
+            };
+
+            assert_eq!(11, builder.get_transaction_cost(&Hash([0; 32])));
+            assert_eq!(1, builder.used_assets().len());
+
+            builder
+                .build(
+                    &mut GenerationBalance {
+                        balances: [(Hash([0; 32]), 100)].into(),
+                        account: alice.clone(),
+                    },
+                    &alice.keypair,
+                )
+                .unwrap()
+        };
+
+        let ledger = Ledger {
+            accounts: [(alice.keypair.pubkey().compress(), alice.clone())].into()
+        };
+
+        // Tx without change is valid
+        assert!(Transaction::verify(&tx, &mut ledger.clone()).is_ok());
+
+        // Verify signature
+        {
+            let mut tx = tx.clone();
+            tx.signature = Signature::new(Scalar::from(0u64), Scalar::from(0u64));
+
+            assert!(Transaction::verify(&tx, &mut ledger.clone()).is_err());
+        }
+
+        // Verify source commitments
+        {
+            let mut tx = tx.clone();
+            tx.new_source_commitments[0].asset = Hash([1; 32]);
+
+            assert!(Transaction::verify(&tx, &mut ledger.clone()).is_err());
+
+            tx.new_source_commitments.clear();
+            assert!(Transaction::verify(&tx, &mut ledger.clone()).is_err());
+        }
+
+        // Verify fee
+        {
+            let mut tx = tx.clone();
+            tx.fee = 0;
+
+            assert!(Transaction::verify(&tx, &mut ledger.clone()).is_err());
+
+            tx.fee = 12;
+            assert!(Transaction::verify(&tx, &mut ledger.clone()).is_err());
+        }
+
+        // Verify nonce
+        {
+            let mut tx = tx.clone();
+            tx.nonce = 1;
+
+            assert!(Transaction::verify(&tx, &mut ledger.clone()).is_err());
         }
     }
 

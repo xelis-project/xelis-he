@@ -4,7 +4,7 @@ use xelis_he::{
     builder::{TransactionBuilder, TransactionTypeBuilder, TransferBuilder},
     Hash,
     Transaction,
-    tests::*,
+    mock::*,
 };
 
 fn n_tx_bench(c: &mut Criterion, n_transfers: usize) {
