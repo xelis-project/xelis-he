@@ -106,6 +106,7 @@ pub mod mock {
     #[derive(Debug, Clone)]
     pub struct Ledger {
         pub accounts: HashMap<CompressedPubkey, Account>,
+        pub multisig_accounts: HashMap<CompressedPubkey, (Vec<CompressedPubkey>, u8)>,
     }
 
     impl Ledger {
@@ -175,6 +176,23 @@ pub mod mock {
             _ct: ElGamalCiphertext,
         ) -> Result<(), Self::Error> {
             Ok(())
+        }
+
+        fn set_multisig_for_account(
+            &mut self,
+            account: &CompressedPubkey,
+            signers: Vec<CompressedPubkey>,
+            threshold: u8,
+        ) -> Result<(), Self::Error> {
+            self.multisig_accounts.insert(account.clone(), (signers, threshold));
+            Ok(())
+        }
+
+        fn get_multisig_for_account(
+                &self,
+                account: &CompressedPubkey,
+            ) -> Result<Option<(Vec<CompressedPubkey>, u8)>, Self::Error> {
+            Ok(self.multisig_accounts.get(account).cloned())
         }
     }
 
@@ -259,7 +277,8 @@ pub mod tests {
         };
 
         let mut ledger = Ledger {
-            accounts: [(alice.keypair.pubkey().compress(), alice.clone())].into()
+            accounts: [(alice.keypair.pubkey().compress(), alice.clone())].into(),
+            multisig_accounts: Default::default(),
         };
 
         Transaction::verify_batch(&vec![tx], &mut ledger).unwrap();
@@ -301,7 +320,8 @@ pub mod tests {
         };
 
         let mut ledger = Ledger {
-            accounts: [(alice.keypair.pubkey().compress(), alice.clone())].into()
+            accounts: [(alice.keypair.pubkey().compress(), alice.clone())].into(),
+            multisig_accounts: Default::default(),
         };
 
         Transaction::verify_batch(&vec![tx], &mut ledger).unwrap();
@@ -345,7 +365,8 @@ pub mod tests {
         };
 
         let ledger = Ledger {
-            accounts: [(alice.keypair.pubkey().compress(), alice.clone())].into()
+            accounts: [(alice.keypair.pubkey().compress(), alice.clone())].into(),
+            multisig_accounts: Default::default(),
         };
 
         assert!(Transaction::verify(&tx, &mut ledger.clone()).is_ok());
@@ -397,7 +418,8 @@ pub mod tests {
         };
 
         let ledger = Ledger {
-            accounts: [(alice.keypair.pubkey().compress(), alice.clone())].into()
+            accounts: [(alice.keypair.pubkey().compress(), alice.clone())].into(),
+            multisig_accounts: Default::default(),
         };
 
         // Tx without change is valid
@@ -455,6 +477,7 @@ pub mod tests {
                 (eve.keypair.pubkey().compress(), eve.clone()),
             ]
             .into(),
+            multisig_accounts: Default::default(),
         };
 
         let bob = bob.keypair.pubkey().compress();
@@ -572,6 +595,7 @@ pub mod tests {
                 (alice.keypair.pubkey().compress(), alice.clone()),
             ]
             .into(),
+            multisig_accounts: Default::default(),
         };
 
         let bob_pk = bob.keypair.pubkey().compress();
@@ -651,6 +675,7 @@ pub mod tests {
                 (alice.keypair.pubkey().compress(), alice.clone()),
             ]
             .into(),
+            multisig_accounts: Default::default(),
         };
 
         let bob = bob.keypair.pubkey().compress();

@@ -20,6 +20,7 @@ fn n_tx_bench(c: &mut Criterion, n_transfers: usize) {
                 (alice.keypair.pubkey().compress(), alice.clone()),
             ]
             .into(),
+            multisig_accounts: Default::default(),
         };
 
         let bob = bob.keypair.pubkey().compress();
@@ -133,6 +134,7 @@ fn batching_bench_util(c: &mut Criterion, batch_size: usize) {
                 (alice.keypair.pubkey().compress(), alice.clone()),
             ]
             .into(),
+            multisig_accounts: Default::default(),
         };
         let mut prover_ledger = ledger.clone();
 

@@ -54,7 +54,9 @@ pub enum TransactionTypeBuilder {
     Transfers(Vec<TransferBuilder>),
     Burn { asset: Hash, amount: u64 },
     CallContract(SmartContractCallBuilder),
-    DeployContract(String), // represent the code to deploy
+    // represent the code to deploy
+    DeployContract(String),
+    Multistig { signers: Vec<CompressedPubkey>, threshold: u8 },
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
@@ -63,6 +65,7 @@ pub struct SmartContractCallBuilder {
     pub assets: HashMap<Hash, u64>,
     pub params: HashMap<String, String>, // TODO
 }
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct TransferBuilder {
     pub asset: Hash,
@@ -156,6 +159,12 @@ impl TransactionSigner {
             }
             TransactionType::DeployContract(code) => {
                 bytes.extend_from_slice(code.as_bytes());
+            },
+            TransactionType::Multisig { signers, threshold } => {
+                bytes.extend_from_slice(&threshold.to_be_bytes());
+                for signer in signers {
+                    bytes.extend_from_slice(&signer.0);
+                }
             }
         }
 
@@ -183,6 +192,7 @@ impl TransactionSigner {
             new_source_commitments: self.source_commitments,
             range_proof: self.range_proof,
             signature,
+            multisig: None
         }
     }
 }
@@ -280,7 +290,7 @@ impl TransactionBuilder {
             TransactionTypeBuilder::CallContract(SmartContractCallBuilder { assets, .. }) => {
                 consumed.extend(assets.keys().cloned());
             }
-            TransactionTypeBuilder::DeployContract(_) => (),
+            _ => (),
         }
 
         consumed
@@ -453,6 +463,22 @@ impl TransactionBuilder {
                 params,
             }),
             TransactionTypeBuilder::DeployContract(c) => TransactionType::DeployContract(c),
+            TransactionTypeBuilder::Multistig { signers, threshold } => {
+                if threshold as usize > signers.len() {
+                    return Err(GenerationError::Proof(ProofGenerationError::Format));
+                }
+
+                transcript.multisig_proof_domain_separator();
+                for (i, signer) in signers.iter().enumerate() {
+                    if signers.iter().enumerate().any(|(j, s)| i != j && s == signer) {
+                        return Err(GenerationError::Proof(ProofGenerationError::Format));
+                    }
+
+                    transcript.append_pubkey(b"signer", signer);
+                }
+
+                TransactionType::Multisig { signers, threshold }
+            }
         };
 
         let n_commitments = range_proof_values.len();

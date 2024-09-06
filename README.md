@@ -12,6 +12,7 @@ Support of following transactions types:
 - Burn: ability to burn a public amount of requested asset from an encrypted balance without revealing it.
 - Transfers: send to one or more destinations any asset / amount.
 - Smart Contract: ability to transfers plaintext amounts using confidentials assets and encrypted balances to a Smart Contract / Public account.
+- Multi-Sig: Secure a wallet behind more than one keypair by providing two ways: on-chain approvals, and off-chains approvals integrated in the TX directly.
 
 Support of Confidential Assets (spend any asset available, not just the "native coin").
 

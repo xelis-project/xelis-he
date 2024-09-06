@@ -62,6 +62,18 @@ pub trait BlockchainVerificationState {
         asset: &Hash,
         ct: ElGamalCiphertext,
     ) -> Result<(), Self::Error>;
+
+    fn set_multisig_for_account(
+        &mut self,
+        account: &CompressedPubkey,
+        signers: Vec<CompressedPubkey>,
+        threshold: u8,
+    ) -> Result<(), Self::Error>;
+
+    fn get_multisig_for_account(
+        &self,
+        account: &CompressedPubkey,
+    ) -> Result<Option<(Vec<CompressedPubkey>, u8)>, Self::Error>;
 }
 
 struct DecompressedTransferCt {
@@ -125,7 +137,7 @@ impl Transaction {
                     bal += Scalar::from(*amount)
                 }
             }
-            TransactionType::DeployContract(_) => (),
+            _ => (),
         }
 
         Ok(bal)
@@ -182,7 +194,7 @@ impl Transaction {
             TransactionType::CallContract(SmartContractCall { assets, .. }) => {
                 assets.keys().all(|key| has_commitment_for_asset(key))
             }
-            TransactionType::DeployContract(_) => true,
+            _ => true,
         }
     }
 
@@ -238,9 +250,42 @@ impl Transaction {
             Self::prepare_transcript(self.version, &self.source, self.fee, self.nonce);
 
         // 0. Verify Signature
-        let bytes = self.to_bytes();
+        let mut bytes = self.to_bytes();
         if !self.signature.verify(&bytes, &owner) {
             return Err(VerificationError::Proof(ProofVerificationError::Signature));
+        }
+
+        // Verify the incorporated multisig signatures
+        if let Some((signers, threshold)) = state.get_multisig_for_account(&self.source).map_err(VerificationError::State)? {
+            if let Some(signatures) = self.get_multisisg() {
+                if signatures.len() < threshold as usize {
+                    return Err(VerificationError::Proof(ProofVerificationError::Format));
+                }
+
+                // Append the signature to the bytes
+                bytes.extend_from_slice(&self.signature.to_bytes());
+
+                for (i, (index, signature)) in signatures.iter().enumerate() {
+                    // Verify that we don't try to sign twice with the same key
+                    if signatures.iter()
+                        .enumerate()
+                        .any(|(j, (signer_index, _))| i != j && signer_index == index) {
+                        return Err(VerificationError::Proof(ProofVerificationError::Format));
+                    }
+
+                    if let Some(signer) = signers.get(*index as usize) {
+                        let decompressed = signer.decompress()
+                            .map_err(|err| VerificationError::Proof(err.into()))?;
+
+                        if !signature.verify(&bytes, &decompressed) {
+                            return Err(VerificationError::Proof(ProofVerificationError::Signature));
+                        }
+                    }
+                }
+            }
+        } else if self.get_multisisg().is_some() {
+            // If we have a multisig in the transaction, but not in the state, it's invalid
+            return Err(VerificationError::Proof(ProofVerificationError::Format));
         }
 
         // 1. Verify CommitmentEqProofs
@@ -347,7 +392,21 @@ impl Transaction {
                 transcript.burn_proof_domain_separator();
                 transcript.append_hash(b"asset", asset);
                 transcript.append_u64(b"amount", *amount);
-            }
+            },
+            TransactionType::Multisig { signers, threshold } => {
+                if *threshold == 0 || *threshold as usize > signers.len() {
+                    return Err(VerificationError::Proof(ProofVerificationError::Format));
+                }
+
+                transcript.multisig_proof_domain_separator();
+                transcript.append_u64(b"threshold", *threshold as u64);
+                for signer in signers {
+                    transcript.append_pubkey(b"signer", signer);
+                }
+
+                state.set_multisig_for_account(&self.source, signers.clone(), *threshold)
+                    .map_err(VerificationError::State)?;
+            },
             _ => ()
         }
 
@@ -573,6 +632,12 @@ impl Transaction {
             },
             TransactionType::DeployContract(contract) => {
                 bytes.extend_from_slice(&contract.as_bytes());
+            },
+            TransactionType::Multisig { signers, threshold } => {
+                bytes.extend_from_slice(&threshold.to_be_bytes());
+                for signer in signers {
+                    bytes.extend_from_slice(&signer.0);
+                }
             }
         }
 
