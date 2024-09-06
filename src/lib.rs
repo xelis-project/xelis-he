@@ -94,11 +94,19 @@ pub enum Role {
     Receiver,
 }
 
-// #[cfg(feature = "")]
-pub mod realistic_test {
-    use self::{builder::GetBlockchainAccountBalance, tx::BlockchainVerificationState};
+#[cfg(any(test, feature = "test"))]
+pub mod tests {
     use super::*;
-    use curve25519_dalek::RistrettoPoint;
+    use self::{
+        extra_data::PlaintextData,
+        builder::GetBlockchainAccountBalance,
+        tx::{
+            builder::{TransactionBuilder, TransactionTypeBuilder, TransferBuilder},
+            BlockchainVerificationState
+        }
+    };
+
+    use curve25519_dalek::{RistrettoPoint, Scalar};
     use std::collections::HashMap;
 
     #[derive(Debug, Clone)]
@@ -215,16 +223,6 @@ pub mod realistic_test {
             }
         }
     }
-}
-
-#[cfg(any(test, feature = "test"))]
-pub mod tests {
-    use crate::extra_data::PlaintextData;
-
-    use self::tx::builder::{TransactionBuilder, TransactionTypeBuilder, TransferBuilder};
-    use super::realistic_test::*;
-    use super::*;
-    use curve25519_dalek::{RistrettoPoint, Scalar};
 
     #[test]
     fn realistic_test() {
@@ -392,7 +390,7 @@ pub mod tests {
                 .unwrap()
         };
 
-        let TransactionType::Transfer(transfers) = tx.get_data() else {
+        let TransactionType::Transfers(transfers) = tx.get_data() else {
             unreachable!()
         };
 

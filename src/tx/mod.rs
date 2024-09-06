@@ -74,18 +74,16 @@ impl Transfer {
 pub struct SmartContractCall {
     pub contract: Hash,
     pub assets: HashMap<Hash, u64>,
-    pub params: HashMap<String, String>, // TODO
+    // TODO
+    pub params: HashMap<String, String>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[serde(rename_all = "snake_case")]
 pub enum TransactionType {
-    #[serde(rename = "transfers")]
-    Transfer(Vec<Transfer>),
-    #[serde(rename = "burn")]
+    Transfers(Vec<Transfer>),
     Burn { asset: Hash, amount: u64 },
-    #[serde(rename = "call_contract")]
     CallContract(SmartContractCall),
-    #[serde(rename = "deploy_contract")]
     DeployContract(String), // represent the code to deploy
 }
 

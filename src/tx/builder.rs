@@ -125,7 +125,7 @@ impl TransactionSigner {
         bytes.extend_from_slice(&self.nonce.to_be_bytes());
 
         match &self.data {
-            TransactionType::Transfer(transfers) => {
+            TransactionType::Transfers(transfers) => {
                 for transfer in transfers {
                     bytes.extend_from_slice(&transfer.asset.0);
                     bytes.extend_from_slice(&transfer.dest_pubkey.0);
@@ -434,7 +434,7 @@ impl TransactionBuilder {
                     })
                     .collect::<Vec<_>>();
     
-                TransactionType::Transfer(transfers)
+                TransactionType::Transfers(transfers)
             },
             TransactionTypeBuilder::Burn { amount, asset } => {
                 transcript.burn_proof_domain_separator();

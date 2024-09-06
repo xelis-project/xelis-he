@@ -105,7 +105,7 @@ impl Transaction {
         }
 
         match &self.data {
-            TransactionType::Transfer(transfers) => {
+            TransactionType::Transfers(transfers) => {
                 for (transfer, d) in transfers.iter().zip(decompressed_transfers.iter()) {
                     if asset == &transfer.asset {
                         bal += d.get_ciphertext(Role::Sender);
@@ -175,7 +175,7 @@ impl Transaction {
         }
 
         match &self.data {
-            TransactionType::Transfer(transfers) => transfers
+            TransactionType::Transfers(transfers) => transfers
                 .iter()
                 .all(|transfer| has_commitment_for_asset(&transfer.asset)),
             TransactionType::Burn { asset, .. } => has_commitment_for_asset(asset),
@@ -212,7 +212,7 @@ impl Transaction {
             return Err(VerificationError::Proof(ProofVerificationError::Format));
         }
 
-        let transfers_decompressed = if let TransactionType::Transfer(transfers) = &self.data {
+        let transfers_decompressed = if let TransactionType::Transfers(transfers) = &self.data {
             transfers
                 .iter()
                 .map(DecompressedTransferCt::decompress)
@@ -294,7 +294,7 @@ impl Transaction {
 
         // 2. Verify every CtValidityProof
         match &self.data {
-            TransactionType::Transfer(transfers) => {
+            TransactionType::Transfers(transfers) => {
                 for (transfer, decompressed) in transfers.iter().zip(&transfers_decompressed) {
                     let receiver = transfer
                         .dest_pubkey
@@ -365,7 +365,7 @@ impl Transaction {
             });
 
         let mut n_commitments = self.new_source_commitments.len();
-        if let TransactionType::Transfer(transfers) = &self.data {
+        if let TransactionType::Transfers(transfers) = &self.data {
             n_commitments += transfers.len()
         }
 
@@ -375,7 +375,7 @@ impl Transaction {
             .ok_or(ProofVerificationError::Format)?
             - n_commitments;
 
-        let value_commitments: Vec<_> = if let TransactionType::Transfer(transfers) = &self.data {
+        let value_commitments: Vec<_> = if let TransactionType::Transfers(transfers) = &self.data {
             new_source_commitments
                 .chain(transfers.iter().zip(&transfers_decompressed).map(
                     |(transfer, decompressed)| {
@@ -468,7 +468,7 @@ impl Transaction {
         &self,
         state: &mut B,
     ) -> Result<(), B::Error> {
-        let transfers_decompressed = if let TransactionType::Transfer(transfers) = &self.data {
+        let transfers_decompressed = if let TransactionType::Transfers(transfers) = &self.data {
             transfers
                 .iter()
                 .map(DecompressedTransferCt::decompress)
@@ -504,7 +504,7 @@ impl Transaction {
             state.set_output_ciphertext(&self.source, asset, output)?;
         }
 
-        if let TransactionType::Transfer(transfers) = &self.data {
+        if let TransactionType::Transfers(transfers) = &self.data {
             for transfer in transfers {
                 let current_bal = state
                     .get_account_balance(
@@ -542,7 +542,7 @@ impl Transaction {
         bytes.extend_from_slice(&self.nonce.to_be_bytes());
 
         match &self.data {
-            TransactionType::Transfer(transfers) => {
+            TransactionType::Transfers(transfers) => {
                 for transfer in transfers {
                     bytes.extend_from_slice(&transfer.asset.0);
                     bytes.extend_from_slice(&transfer.dest_pubkey.0);

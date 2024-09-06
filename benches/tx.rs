@@ -2,8 +2,9 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use std::iter;
 use xelis_he::{
     builder::{TransactionBuilder, TransactionTypeBuilder, TransferBuilder},
-    realistic_test::*,
-    Hash, Transaction,
+    Hash,
+    Transaction,
+    tests::*,
 };
 
 fn n_tx_bench(c: &mut Criterion, n_transfers: usize) {
@@ -38,7 +39,7 @@ fn n_tx_bench(c: &mut Criterion, n_transfers: usize) {
                 .collect(),
             ),
             fee: 3,
-            nonce: 1,
+            nonce: 0,
         };
 
         let state = GenerationBalance {
@@ -153,7 +154,7 @@ fn batching_bench_util(c: &mut Criterion, batch_size: usize) {
                     extra_data: Default::default(),
                 }]),
                 fee: 3,
-                nonce: 1,
+                nonce: 0,
             };
 
             let cost = builder.get_transaction_cost(&Hash([0; 32]));
