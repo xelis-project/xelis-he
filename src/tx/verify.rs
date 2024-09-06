@@ -125,7 +125,7 @@ impl Transaction {
                     bal += Scalar::from(*amount)
                 }
             }
-            TransactionType::DeployContract(_) => todo!(),
+            TransactionType::DeployContract(_) => (),
         }
 
         Ok(bal)
@@ -182,7 +182,7 @@ impl Transaction {
             TransactionType::CallContract(SmartContractCall { assets, .. }) => {
                 assets.keys().all(|key| has_commitment_for_asset(key))
             }
-            TransactionType::DeployContract(_) => todo!(),
+            TransactionType::DeployContract(_) => true,
         }
     }
 

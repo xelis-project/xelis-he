@@ -280,7 +280,7 @@ impl TransactionBuilder {
             TransactionTypeBuilder::CallContract(SmartContractCallBuilder { assets, .. }) => {
                 consumed.extend(assets.keys().cloned());
             }
-            TransactionTypeBuilder::DeployContract(_) => todo!(),
+            TransactionTypeBuilder::DeployContract(_) => (),
         }
 
         consumed
