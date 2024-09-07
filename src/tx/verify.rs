@@ -66,7 +66,7 @@ pub trait BlockchainVerificationState {
     fn set_multisig_for_account(
         &mut self,
         account: &CompressedPubkey,
-        signers: Vec<CompressedPubkey>,
+        signers: &Vec<CompressedPubkey>,
         threshold: u8,
     ) -> Result<(), Self::Error>;
 
@@ -404,7 +404,7 @@ impl Transaction {
                     transcript.append_pubkey(b"signer", signer);
                 }
 
-                state.set_multisig_for_account(&self.source, signers.clone(), *threshold)
+                state.set_multisig_for_account(&self.source, signers, *threshold)
                     .map_err(VerificationError::State)?;
             },
             _ => ()
@@ -563,31 +563,37 @@ impl Transaction {
             state.set_output_ciphertext(&self.source, asset, output)?;
         }
 
-        if let TransactionType::Transfers(transfers) = &self.data {
-            for transfer in transfers {
-                let current_bal = state
-                    .get_account_balance(
+        match &self.data {
+            TransactionType::Transfers(transfers) => {
+                for transfer in transfers {
+                    let current_bal = state
+                        .get_account_balance(
+                            &transfer.dest_pubkey,
+                            &transfer.asset,
+                            Role::Receiver
+                        )?
+                        .decompress()
+                        .expect("ill-formed ciphertext");
+
+                    let receiver_ct = transfer
+                        .get_ciphertext(Role::Receiver)
+                        .decompress()
+                        .expect("ill-formed ciphertext");
+
+                    let receiver_new_balance = current_bal + receiver_ct;
+
+                    state.update_account_balance(
                         &transfer.dest_pubkey,
                         &transfer.asset,
-                        Role::Receiver
-                    )?
-                    .decompress()
-                    .expect("ill-formed ciphertext");
-
-                let receiver_ct = transfer
-                    .get_ciphertext(Role::Receiver)
-                    .decompress()
-                    .expect("ill-formed ciphertext");
-
-                let receiver_new_balance = current_bal + receiver_ct;
-
-                state.update_account_balance(
-                    &transfer.dest_pubkey,
-                    &transfer.asset,
-                    receiver_new_balance.compress(),
-                    Role::Receiver,
-                )?;
-            }
+                        receiver_new_balance.compress(),
+                        Role::Receiver,
+                    )?;
+                }
+            },
+            TransactionType::Multisig { signers, threshold } => {
+                state.set_multisig_for_account(&self.source, signers, *threshold)?;
+            },
+            _ => (),
         }
     
         Ok(())

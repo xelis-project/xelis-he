@@ -181,10 +181,10 @@ pub mod mock {
         fn set_multisig_for_account(
             &mut self,
             account: &CompressedPubkey,
-            signers: Vec<CompressedPubkey>,
+            signers: &Vec<CompressedPubkey>,
             threshold: u8,
         ) -> Result<(), Self::Error> {
-            self.multisig_accounts.insert(account.clone(), (signers, threshold));
+            self.multisig_accounts.insert(account.clone(), (signers.clone(), threshold));
             Ok(())
         }
 
