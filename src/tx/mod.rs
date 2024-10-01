@@ -14,6 +14,8 @@ use crate::{
     ExtraDataDecryptionError, Hash, Role, Signature,
 };
 
+pub type MultiSig = Vec<(u8, Signature)>;
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Transfer {
     pub asset: Hash,
@@ -107,14 +109,12 @@ pub struct Transaction {
     pub(crate) new_source_commitments: Vec<NewSourceCommitment>,
     /// The range proof is aggregated across all transfers and across all assets.
     pub(crate) range_proof: RangeProof,
-    /// Signature of the TX by the source.
-    pub(crate) signature: Signature,
     /// Multisig signatures.
     /// Useful for directly accepted multisig transactions without any on-chain interaction.
     /// The first element of the tuple is the index of the signer
-    /// This part is alterable by anyone has it is not included in transcript or source signature.
-    /// TODO: should we include it in the source signature instead ?
-    pub(crate) multisig: Option<Vec<(u8, Signature)>>,
+    pub(crate) multisig: Option<MultiSig>,
+    /// Signature of the TX by the source.
+    pub(crate) signature: Signature,
 }
 
 impl Transaction {
@@ -144,9 +144,5 @@ impl Transaction {
 
     pub fn consume(self) -> (CompressedPubkey, TransactionType) {
         (self.source, self.data)
-    }
-
-    pub fn add_signature(&mut self, index: u8, signature: Signature) {
-        self.multisig.get_or_insert_with(Vec::new).push((index, signature));
     }
 }
