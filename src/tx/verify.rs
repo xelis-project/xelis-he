@@ -250,7 +250,7 @@ impl Transaction {
             Self::prepare_transcript(self.version, &self.source, self.fee, self.nonce);
 
         // 0. Verify Signature
-        let bytes = self.to_bytes();
+        let (bytes, multisig_index) = self.to_bytes();
         if !self.signature.verify(&bytes, &owner) {
             return Err(VerificationError::Proof(ProofVerificationError::Signature));
         }
@@ -262,7 +262,8 @@ impl Transaction {
                     return Err(VerificationError::Proof(ProofVerificationError::Format));
                 }
 
-                let hash = blake3::hash(&bytes);
+                // Hash the transaction bytes up to the multisig index
+                let hash = blake3::hash(&bytes[..multisig_index]);
                 for (i, (index, signature)) in signatures.iter().enumerate() {
                     // Verify that we don't try to sign twice with the same key
                     if signatures.iter()
@@ -602,7 +603,7 @@ impl Transaction {
 
     // Transaction data to bytes format
     // This doesn't include the signature and the multisig signatures
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> (Vec<u8>, usize) {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&self.version.to_be_bytes());
         bytes.extend_from_slice(&self.source.0);
@@ -658,6 +659,14 @@ impl Transaction {
             bytes.extend_from_slice(&commitment.new_commitment_eq_proof.to_bytes());
         }
 
-        bytes
+        let n_bytes = bytes.len();
+        if let Some(multisig) = &self.multisig {
+            for (id, sig) in multisig {
+                bytes.push(*id);
+                bytes.extend_from_slice(&sig.to_bytes());
+            }
+        }
+
+        (bytes, n_bytes)
     }
 }
