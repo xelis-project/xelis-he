@@ -62,6 +62,18 @@ pub trait BlockchainVerificationState {
         asset: &Hash,
         ct: ElGamalCiphertext,
     ) -> Result<(), Self::Error>;
+
+    fn set_multisig_for_account(
+        &mut self,
+        account: &CompressedPubkey,
+        signers: &Vec<CompressedPubkey>,
+        threshold: u8,
+    ) -> Result<(), Self::Error>;
+
+    fn get_multisig_for_account(
+        &self,
+        account: &CompressedPubkey,
+    ) -> Result<Option<(Vec<CompressedPubkey>, u8)>, Self::Error>;
 }
 
 struct DecompressedTransferCt {
@@ -125,7 +137,7 @@ impl Transaction {
                     bal += Scalar::from(*amount)
                 }
             }
-            TransactionType::DeployContract(_) => (),
+            _ => (),
         }
 
         Ok(bal)
@@ -182,7 +194,7 @@ impl Transaction {
             TransactionType::CallContract(SmartContractCall { assets, .. }) => {
                 assets.keys().all(|key| has_commitment_for_asset(key))
             }
-            TransactionType::DeployContract(_) => true,
+            _ => true,
         }
     }
 
@@ -238,9 +250,45 @@ impl Transaction {
             Self::prepare_transcript(self.version, &self.source, self.fee, self.nonce);
 
         // 0. Verify Signature
-        let bytes = self.to_bytes();
+        let (bytes, multisig_index) = self.to_bytes();
         if !self.signature.verify(&bytes, &owner) {
             return Err(VerificationError::Proof(ProofVerificationError::Signature));
+        }
+
+        // Verify the incorporated multisig signatures
+        if let Some((signers, threshold)) = state.get_multisig_for_account(&self.source).map_err(VerificationError::State)? {
+            if let Some(signatures) = self.get_multisisg() {
+                // The multisig must have the exact same signers count as threshold
+                if signatures.is_empty() || signatures.len() != threshold as usize {
+                    return Err(VerificationError::Proof(ProofVerificationError::Format));
+                }
+
+                // Hash the transaction bytes up to the multisig index
+                let hash = blake3::hash(&bytes[..multisig_index]);
+                for (i, (index, signature)) in signatures.iter().enumerate() {
+                    // Verify that we don't try to sign twice with the same key
+                    if signatures.iter()
+                        .enumerate()
+                        .any(|(j, (signer_index, _))| i != j && signer_index == index) {
+                        return Err(VerificationError::Proof(ProofVerificationError::Format));
+                    }
+
+                    if let Some(signer) = signers.get(*index as usize) {
+                        let decompressed = signer.decompress()
+                            .map_err(|err| VerificationError::Proof(err.into()))?;
+
+                        if !signature.verify(hash.as_bytes(), &decompressed) {
+                            return Err(VerificationError::Proof(ProofVerificationError::Signature));
+                        }
+                    }
+                }
+            } else {
+                // If we have a multisig in the state, but not in the transaction, it's invalid
+                return Err(VerificationError::Proof(ProofVerificationError::Format));
+            }
+        } else if self.get_multisisg().is_some() {
+            // If we have a multisig in the transaction, but not in the state, it's invalid
+            return Err(VerificationError::Proof(ProofVerificationError::Format));
         }
 
         // 1. Verify CommitmentEqProofs
@@ -347,7 +395,35 @@ impl Transaction {
                 transcript.burn_proof_domain_separator();
                 transcript.append_hash(b"asset", asset);
                 transcript.append_u64(b"amount", *amount);
-            }
+            },
+            TransactionType::MultiSig { signers, threshold } => {
+                // Threshold must be less or equal than the number of signers
+                // It can only be zero if there are no signers
+                if *threshold as usize > signers.len() || (!signers.is_empty() && *threshold == 0) {
+                    return Err(VerificationError::Proof(ProofVerificationError::Format));
+                }
+
+                // All signers must be unique
+                if signers.iter().enumerate().any(|(i, signer)| {
+                    signers.iter().enumerate().any(|(j, signer2)| i != j && signer == signer2)
+                }) {
+                    return Err(VerificationError::Proof(ProofVerificationError::Format));
+                }
+
+                // Source cannot be part of the multisig
+                if signers.iter().any(|signer| signer == &self.source) {
+                    return Err(VerificationError::Proof(ProofVerificationError::Format));
+                }
+
+                transcript.multisig_proof_domain_separator();
+                transcript.append_u64(b"threshold", *threshold as u64);
+                for signer in signers {
+                    transcript.append_pubkey(b"signer", signer);
+                }
+
+                state.set_multisig_for_account(&self.source, signers, *threshold)
+                    .map_err(VerificationError::State)?;
+            },
             _ => ()
         }
 
@@ -504,37 +580,45 @@ impl Transaction {
             state.set_output_ciphertext(&self.source, asset, output)?;
         }
 
-        if let TransactionType::Transfers(transfers) = &self.data {
-            for transfer in transfers {
-                let current_bal = state
-                    .get_account_balance(
+        match &self.data {
+            TransactionType::Transfers(transfers) => {
+                for transfer in transfers {
+                    let current_bal = state
+                        .get_account_balance(
+                            &transfer.dest_pubkey,
+                            &transfer.asset,
+                            Role::Receiver
+                        )?
+                        .decompress()
+                        .expect("ill-formed ciphertext");
+
+                    let receiver_ct = transfer
+                        .get_ciphertext(Role::Receiver)
+                        .decompress()
+                        .expect("ill-formed ciphertext");
+
+                    let receiver_new_balance = current_bal + receiver_ct;
+
+                    state.update_account_balance(
                         &transfer.dest_pubkey,
                         &transfer.asset,
-                        Role::Receiver
-                    )?
-                    .decompress()
-                    .expect("ill-formed ciphertext");
-
-                let receiver_ct = transfer
-                    .get_ciphertext(Role::Receiver)
-                    .decompress()
-                    .expect("ill-formed ciphertext");
-
-                let receiver_new_balance = current_bal + receiver_ct;
-
-                state.update_account_balance(
-                    &transfer.dest_pubkey,
-                    &transfer.asset,
-                    receiver_new_balance.compress(),
-                    Role::Receiver,
-                )?;
-            }
+                        receiver_new_balance.compress(),
+                        Role::Receiver,
+                    )?;
+                }
+            },
+            TransactionType::MultiSig { signers, threshold } => {
+                state.set_multisig_for_account(&self.source, signers, *threshold)?;
+            },
+            _ => (),
         }
     
         Ok(())
     }
 
-    pub fn to_bytes(&self) -> Vec<u8> {
+    // Transaction data to bytes format
+    // This doesn't include the signature and the multisig signatures
+    pub fn to_bytes(&self) -> (Vec<u8>, usize) {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&self.version.to_be_bytes());
         bytes.extend_from_slice(&self.source.0);
@@ -573,6 +657,12 @@ impl Transaction {
             },
             TransactionType::DeployContract(contract) => {
                 bytes.extend_from_slice(&contract.as_bytes());
+            },
+            TransactionType::MultiSig { signers, threshold } => {
+                bytes.extend_from_slice(&threshold.to_be_bytes());
+                for signer in signers {
+                    bytes.extend_from_slice(&signer.0);
+                }
             }
         }
 
@@ -584,6 +674,14 @@ impl Transaction {
             bytes.extend_from_slice(&commitment.new_commitment_eq_proof.to_bytes());
         }
 
-        bytes
+        let n_bytes = bytes.len();
+        if let Some(multisig) = &self.multisig {
+            for (id, sig) in multisig {
+                bytes.push(*id);
+                bytes.extend_from_slice(&sig.to_bytes());
+            }
+        }
+
+        (bytes, n_bytes)
     }
 }

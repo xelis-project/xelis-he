@@ -14,6 +14,8 @@ use crate::{
     ExtraDataDecryptionError, Hash, Role, Signature,
 };
 
+pub type MultiSig = Vec<(u8, Signature)>;
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Transfer {
     pub asset: Hash,
@@ -84,7 +86,10 @@ pub enum TransactionType {
     Transfers(Vec<Transfer>),
     Burn { asset: Hash, amount: u64 },
     CallContract(SmartContractCall),
-    DeployContract(String), // represent the code to deploy
+    // represent the code to deploy
+    DeployContract(String),
+    // Configure the current account owner as a multisig account
+    MultiSig { signers: Vec<CompressedPubkey>, threshold: u8 },
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
@@ -101,11 +106,16 @@ pub struct Transaction {
     pub(crate) data: TransactionType,
     pub(crate) fee: u64,
     pub(crate) nonce: u64,
-    pub(crate) signature: Signature,
     /// We have one source_commitment and equality proof per asset used in the tx.
     pub(crate) new_source_commitments: Vec<NewSourceCommitment>,
     /// The range proof is aggregated across all transfers and across all assets.
     pub(crate) range_proof: RangeProof,
+    /// Multisig signatures.
+    /// Useful for directly accepted multisig transactions without any on-chain interaction.
+    /// The first element of the tuple is the index of the signer
+    pub(crate) multisig: Option<MultiSig>,
+    /// Signature of the TX by the source.
+    pub(crate) signature: Signature,
 }
 
 impl Transaction {
@@ -127,6 +137,10 @@ impl Transaction {
 
     pub fn get_nonce(&self) -> u64 {
         self.nonce
+    }
+
+    pub fn get_multisisg(&self) -> Option<&Vec<(u8, Signature)>> {
+        self.multisig.as_ref()
     }
 
     pub fn consume(self) -> (CompressedPubkey, TransactionType) {

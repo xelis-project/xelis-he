@@ -28,7 +28,7 @@ use crate::{
     Transfer
 };
 
-use super::SmartContractCall;
+use super::{MultiSig, SmartContractCall};
 
 #[derive(Error, Debug, Clone)]
 pub enum GenerationError<T> {
@@ -54,7 +54,9 @@ pub enum TransactionTypeBuilder {
     Transfers(Vec<TransferBuilder>),
     Burn { asset: Hash, amount: u64 },
     CallContract(SmartContractCallBuilder),
-    DeployContract(String), // represent the code to deploy
+    // represent the code to deploy
+    DeployContract(String),
+    MultiSig { signers: Vec<CompressedPubkey>, threshold: u8 },
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
@@ -63,6 +65,7 @@ pub struct SmartContractCallBuilder {
     pub assets: HashMap<Hash, u64>,
     pub params: HashMap<String, String>, // TODO
 }
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct TransferBuilder {
     pub asset: Hash,
@@ -102,8 +105,9 @@ impl TransferWithCommitment {
 }
 
 // Used to build the final transaction
-// by signing it
-struct TransactionSigner {
+// This is intermediate transaction that will be signed
+// You can add multisig signature to this transaction
+pub struct TransactionUnsigned {
     version: u8,
     source: CompressedPubkey,
     data: TransactionType,
@@ -111,10 +115,10 @@ struct TransactionSigner {
     nonce: u64,
     source_commitments: Vec<NewSourceCommitment>,
     range_proof: RangeProof,
+    multisig: Option<MultiSig>,
 }
 
-impl TransactionSigner {
-
+impl TransactionUnsigned {
     // TODO: do better
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -156,6 +160,12 @@ impl TransactionSigner {
             }
             TransactionType::DeployContract(code) => {
                 bytes.extend_from_slice(code.as_bytes());
+            },
+            TransactionType::MultiSig { signers, threshold } => {
+                bytes.extend_from_slice(&threshold.to_be_bytes());
+                for signer in signers {
+                    bytes.extend_from_slice(&signer.0);
+                }
             }
         }
 
@@ -167,9 +177,29 @@ impl TransactionSigner {
             bytes.extend_from_slice(&commitment.new_commitment_eq_proof.to_bytes());
         }
 
+        if let Some(multisig) = &self.multisig {
+            for (id, sig) in multisig {
+                bytes.push(*id);
+                bytes.extend_from_slice(&sig.to_bytes());
+            }
+        }
+
         bytes
     }
 
+    /// Hash the transaction
+    /// This is used to create the multisig signatures
+    pub fn hash(&self) -> Hash {
+        assert!(self.multisig.is_none());
+        Hash(blake3::hash(&self.to_bytes()).into())
+    }
+
+    /// Set the multisig signature
+    pub fn set_multisig(&mut self, multisig: MultiSig) {
+        self.multisig = Some(multisig);
+    }
+
+    /// Sign the transaction with the given keypair
     pub fn sign(self, keypair: &ElGamalKeypair) -> Transaction {
         let bytes = self.to_bytes();
         let signature = keypair.sign(&bytes);
@@ -182,6 +212,7 @@ impl TransactionSigner {
             nonce: self.nonce,
             new_source_commitments: self.source_commitments,
             range_proof: self.range_proof,
+            multisig: self.multisig,
             signature,
         }
     }
@@ -280,17 +311,17 @@ impl TransactionBuilder {
             TransactionTypeBuilder::CallContract(SmartContractCallBuilder { assets, .. }) => {
                 consumed.extend(assets.keys().cloned());
             }
-            TransactionTypeBuilder::DeployContract(_) => (),
+            _ => (),
         }
 
         consumed
     }
 
-    pub fn build<B: GetBlockchainAccountBalance>(
+    pub fn build_unsigned<B: GetBlockchainAccountBalance>(
         mut self,
         state: &mut B,
         source_keypair: &ElGamalKeypair,
-    ) -> Result<Transaction, GenerationError<B::Error>> {
+    ) -> Result<TransactionUnsigned, GenerationError<B::Error>> {
         // 0.a Create the commitments
 
         let used_assets = self.used_assets();
@@ -453,6 +484,28 @@ impl TransactionBuilder {
                 params,
             }),
             TransactionTypeBuilder::DeployContract(c) => TransactionType::DeployContract(c),
+            TransactionTypeBuilder::MultiSig { signers, threshold } => {
+                if threshold as usize > signers.len() || (!signers.is_empty() && threshold == 0) {
+                    return Err(GenerationError::Proof(ProofGenerationError::Format));
+                }
+
+                transcript.multisig_proof_domain_separator();
+                transcript.append_u64(b"threshold", threshold as u64);
+                for (i, signer) in signers.iter().enumerate() {
+                    // Signer cannot be the source
+                    if *signer == self.source {
+                        return Err(GenerationError::Proof(ProofGenerationError::Format));
+                    }
+
+                    if signers.iter().enumerate().any(|(j, s)| i != j && s == signer) {
+                        return Err(GenerationError::Proof(ProofGenerationError::Format));
+                    }
+
+                    transcript.append_pubkey(b"signer", signer);
+                }
+
+                TransactionType::MultiSig { signers, threshold }
+            }
         };
 
         let n_commitments = range_proof_values.len();
@@ -478,7 +531,7 @@ impl TransactionBuilder {
         )
         .map_err(ProofGenerationError::from)?;
 
-        Ok(TransactionSigner {
+        Ok(TransactionUnsigned {
             version: self.version,
             source: self.source,
             data,
@@ -486,6 +539,16 @@ impl TransactionBuilder {
             nonce: self.nonce,
             source_commitments,
             range_proof,
-        }.sign(source_keypair))
+            multisig: None,
+        })
+    }
+
+    pub fn build<B: GetBlockchainAccountBalance>(
+        self,
+        state: &mut B,
+        source_keypair: &ElGamalKeypair,
+    ) -> Result<Transaction, GenerationError<B::Error>> {
+        let unsigned = self.build_unsigned(state, source_keypair)?;
+        Ok(unsigned.sign(source_keypair))
     }
 }
