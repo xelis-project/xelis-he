@@ -401,6 +401,18 @@ impl Transaction {
                     return Err(VerificationError::Proof(ProofVerificationError::Format));
                 }
 
+                // All signers must be unique
+                if signers.iter().enumerate().any(|(i, signer)| {
+                    signers.iter().enumerate().any(|(j, signer2)| i != j && signer == signer2)
+                }) {
+                    return Err(VerificationError::Proof(ProofVerificationError::Format));
+                }
+
+                // Source cannot be part of the multisig
+                if signers.iter().any(|signer| signer == &self.source) {
+                    return Err(VerificationError::Proof(ProofVerificationError::Format));
+                }
+
                 transcript.multisig_proof_domain_separator();
                 transcript.append_u64(b"threshold", *threshold as u64);
                 for signer in signers {

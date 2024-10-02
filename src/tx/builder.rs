@@ -492,6 +492,11 @@ impl TransactionBuilder {
                 transcript.multisig_proof_domain_separator();
                 transcript.append_u64(b"threshold", threshold as u64);
                 for (i, signer) in signers.iter().enumerate() {
+                    // Signer cannot be the source
+                    if *signer == self.source {
+                        return Err(GenerationError::Proof(ProofGenerationError::Format));
+                    }
+
                     if signers.iter().enumerate().any(|(j, s)| i != j && s == signer) {
                         return Err(GenerationError::Proof(ProofGenerationError::Format));
                     }
