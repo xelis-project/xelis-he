@@ -280,6 +280,9 @@ impl Transaction {
                         }
                     }
                 }
+            } else {
+                // If we have a multisig in the state, but not in the transaction, it's invalid
+                return Err(VerificationError::Proof(ProofVerificationError::Format));
             }
         } else if self.get_multisisg().is_some() {
             // If we have a multisig in the transaction, but not in the state, it's invalid
