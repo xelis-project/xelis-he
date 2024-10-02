@@ -258,7 +258,8 @@ impl Transaction {
         // Verify the incorporated multisig signatures
         if let Some((signers, threshold)) = state.get_multisig_for_account(&self.source).map_err(VerificationError::State)? {
             if let Some(signatures) = self.get_multisisg() {
-                if signatures.len() < threshold as usize {
+                // The multisig must have the exact same signers count as threshold
+                if signatures.len() != threshold as usize {
                     return Err(VerificationError::Proof(ProofVerificationError::Format));
                 }
 

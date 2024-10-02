@@ -362,6 +362,130 @@ pub mod tests {
     }
 
     #[test]
+    fn test_multisig_threshold_2() {
+        let alice = Account::new([(Hash([0; 32]), 100)]);
+        let bob = Account::new([(Hash([0; 32]), 0)]);
+        let charlie = Account::new([(Hash([0; 32]), 0)]);
+        let dave = Account::new([(Hash([0; 32]), 0)]);
+
+        let tx = {
+            let builder = TransactionBuilder {
+                version: 1,
+                source: alice.keypair.pubkey().compress(),
+                data: TransactionTypeBuilder::Transfers(vec![TransferBuilder {
+                    dest_pubkey: bob.keypair.pubkey().compress(),
+                    amount: 10,
+                    asset: Hash([0; 32]),
+                    extra_data: Default::default(),
+                }]),
+                fee: 1,
+                nonce: 0,
+            };
+
+            assert_eq!(11, builder.get_transaction_cost(&Hash([0; 32])));
+            assert_eq!(1, builder.used_assets().len());
+
+            let mut unsigned = builder
+                .build_unsigned(
+                    &mut GenerationBalance {
+                        balances: [(Hash([0; 32]), 100)].into(),
+                        account: alice.clone(),
+                    },
+                    &alice.keypair,
+                )
+                .unwrap();
+
+            let hash = unsigned.hash();
+            let signature1 = charlie.keypair.sign(&hash.0);
+            let signature2 = dave.keypair.sign(&hash.0);
+            unsigned.set_multisig(vec![(0, signature1), (1, signature2)]);
+            unsigned.sign(&alice.keypair)
+        };
+
+        let mut ledger = Ledger {
+            accounts: [
+                (alice.keypair.pubkey().compress(), alice.clone()),
+                (bob.keypair.pubkey().compress(), bob.clone()),
+                (charlie.keypair.pubkey().compress(), charlie.clone()),
+                (dave.keypair.pubkey().compress(), dave.clone()),
+            ].into(),
+            multisig_accounts: Default::default(),
+        };
+
+        // Add multisig
+        ledger.set_multisig_for_account(
+            &alice.keypair.pubkey().compress(),
+            &vec![charlie.keypair.pubkey().compress(), dave.keypair.pubkey().compress()],
+            2,
+        )
+        .unwrap();
+
+        Transaction::verify(&tx, &mut ledger).unwrap();
+    }
+
+    #[test]
+    fn test_multisig_threshold_one_on_two_signers() {
+        let alice = Account::new([(Hash([0; 32]), 100)]);
+        let bob = Account::new([(Hash([0; 32]), 0)]);
+        let charlie = Account::new([(Hash([0; 32]), 0)]);
+        let dave = Account::new([(Hash([0; 32]), 0)]);
+
+        let tx = {
+            let builder = TransactionBuilder {
+                version: 1,
+                source: alice.keypair.pubkey().compress(),
+                data: TransactionTypeBuilder::Transfers(vec![TransferBuilder {
+                    dest_pubkey: bob.keypair.pubkey().compress(),
+                    amount: 10,
+                    asset: Hash([0; 32]),
+                    extra_data: Default::default(),
+                }]),
+                fee: 1,
+                nonce: 0,
+            };
+
+            assert_eq!(11, builder.get_transaction_cost(&Hash([0; 32])));
+            assert_eq!(1, builder.used_assets().len());
+
+            let mut unsigned = builder
+                .build_unsigned(
+                    &mut GenerationBalance {
+                        balances: [(Hash([0; 32]), 100)].into(),
+                        account: alice.clone(),
+                    },
+                    &alice.keypair,
+                )
+                .unwrap();
+
+            let hash = unsigned.hash();
+            let signature1 = dave.keypair.sign(&hash.0);
+            unsigned.set_multisig(vec![(1, signature1)]);
+            unsigned.sign(&alice.keypair)
+        };
+
+        let mut ledger = Ledger {
+            accounts: [
+                (alice.keypair.pubkey().compress(), alice.clone()),
+                (bob.keypair.pubkey().compress(), bob.clone()),
+                (charlie.keypair.pubkey().compress(), charlie.clone()),
+                (dave.keypair.pubkey().compress(), dave.clone()),
+            ].into(),
+            multisig_accounts: Default::default(),
+        };
+
+        // Add multisig
+        // One of the two signers is enough
+        ledger.set_multisig_for_account(
+            &alice.keypair.pubkey().compress(),
+            &vec![charlie.keypair.pubkey().compress(), dave.keypair.pubkey().compress()],
+            1,
+        )
+        .unwrap();
+
+        Transaction::verify(&tx, &mut ledger).unwrap();
+    }
+
+    #[test]
     fn test_burn() {
         let alice = Account::new([(Hash([0; 32]), 100)]);
         let tx = {
