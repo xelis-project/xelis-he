@@ -56,7 +56,7 @@ pub enum TransactionTypeBuilder {
     CallContract(SmartContractCallBuilder),
     // represent the code to deploy
     DeployContract(String),
-    Multistig { signers: Vec<CompressedPubkey>, threshold: u8 },
+    MultiSig { signers: Vec<CompressedPubkey>, threshold: u8 },
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
@@ -161,7 +161,7 @@ impl TransactionUnsigned {
             TransactionType::DeployContract(code) => {
                 bytes.extend_from_slice(code.as_bytes());
             },
-            TransactionType::Multisig { signers, threshold } => {
+            TransactionType::MultiSig { signers, threshold } => {
                 bytes.extend_from_slice(&threshold.to_be_bytes());
                 for signer in signers {
                     bytes.extend_from_slice(&signer.0);
@@ -484,12 +484,13 @@ impl TransactionBuilder {
                 params,
             }),
             TransactionTypeBuilder::DeployContract(c) => TransactionType::DeployContract(c),
-            TransactionTypeBuilder::Multistig { signers, threshold } => {
-                if threshold as usize > signers.len() {
+            TransactionTypeBuilder::MultiSig { signers, threshold } => {
+                if threshold == 0 || threshold as usize > signers.len() {
                     return Err(GenerationError::Proof(ProofGenerationError::Format));
                 }
 
                 transcript.multisig_proof_domain_separator();
+                transcript.append_u64(b"threshold", threshold as u64);
                 for (i, signer) in signers.iter().enumerate() {
                     if signers.iter().enumerate().any(|(j, s)| i != j && s == signer) {
                         return Err(GenerationError::Proof(ProofGenerationError::Format));
@@ -498,7 +499,7 @@ impl TransactionBuilder {
                     transcript.append_pubkey(b"signer", signer);
                 }
 
-                TransactionType::Multisig { signers, threshold }
+                TransactionType::MultiSig { signers, threshold }
             }
         };
 

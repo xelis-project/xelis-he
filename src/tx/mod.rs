@@ -88,7 +88,8 @@ pub enum TransactionType {
     CallContract(SmartContractCall),
     // represent the code to deploy
     DeployContract(String),
-    Multisig { signers: Vec<CompressedPubkey>, threshold: u8 },
+    // Configure the current account owner as a multisig account
+    MultiSig { signers: Vec<CompressedPubkey>, threshold: u8 },
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]

@@ -396,7 +396,7 @@ impl Transaction {
                 transcript.append_hash(b"asset", asset);
                 transcript.append_u64(b"amount", *amount);
             },
-            TransactionType::Multisig { signers, threshold } => {
+            TransactionType::MultiSig { signers, threshold } => {
                 if *threshold == 0 || *threshold as usize > signers.len() {
                     return Err(VerificationError::Proof(ProofVerificationError::Format));
                 }
@@ -593,7 +593,7 @@ impl Transaction {
                     )?;
                 }
             },
-            TransactionType::Multisig { signers, threshold } => {
+            TransactionType::MultiSig { signers, threshold } => {
                 state.set_multisig_for_account(&self.source, signers, *threshold)?;
             },
             _ => (),
@@ -644,7 +644,7 @@ impl Transaction {
             TransactionType::DeployContract(contract) => {
                 bytes.extend_from_slice(&contract.as_bytes());
             },
-            TransactionType::Multisig { signers, threshold } => {
+            TransactionType::MultiSig { signers, threshold } => {
                 bytes.extend_from_slice(&threshold.to_be_bytes());
                 for signer in signers {
                     bytes.extend_from_slice(&signer.0);

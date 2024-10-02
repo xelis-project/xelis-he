@@ -486,6 +486,65 @@ pub mod tests {
     }
 
     #[test]
+    fn test_multisig_setup() {
+        let alice = Account::new([(Hash([0; 32]), 100)]);
+        let bob = Account::new([(Hash([0; 32]), 0)]);
+        let charlie = Account::new([(Hash([0; 32]), 0)]);
+        let dave = Account::new([(Hash([0; 32]), 0)]);
+
+        let tx = {
+            let builder = TransactionBuilder {
+                version: 1,
+                source: alice.keypair.pubkey().compress(),
+                data: TransactionTypeBuilder::MultiSig {
+                    signers: vec![
+                        charlie.keypair.pubkey().compress(),
+                        dave.keypair.pubkey().compress(),
+                    ],
+                    threshold: 2,
+                },
+                fee: 1,
+                nonce: 0,
+            };
+
+            assert_eq!(1, builder.get_transaction_cost(&Hash([0; 32])));
+
+            builder
+                .build(
+                    &mut GenerationBalance {
+                        balances: [(Hash([0; 32]), 100)].into(),
+                        account: alice.clone(),
+                    },
+                    &alice.keypair,
+                )
+                .unwrap()
+        };
+
+        let mut ledger = Ledger {
+            accounts: [
+                (alice.keypair.pubkey().compress(), alice.clone()),
+                (bob.keypair.pubkey().compress(), bob.clone()),
+                (charlie.keypair.pubkey().compress(), charlie.clone()),
+                (dave.keypair.pubkey().compress(), dave.clone()),
+            ].into(),
+            multisig_accounts: Default::default(),
+        };
+
+        Transaction::verify(&tx, &mut ledger).unwrap();
+
+        assert_eq!(
+            ledger.get_multisig_for_account(&alice.keypair.pubkey().compress()).unwrap(),
+            Some((
+                vec![
+                    charlie.keypair.pubkey().compress(),
+                    dave.keypair.pubkey().compress()
+                ],
+                2
+            ))
+        );
+    }
+
+    #[test]
     fn test_burn() {
         let alice = Account::new([(Hash([0; 32]), 100)]);
         let tx = {
