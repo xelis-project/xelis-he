@@ -485,7 +485,7 @@ impl TransactionBuilder {
             }),
             TransactionTypeBuilder::DeployContract(c) => TransactionType::DeployContract(c),
             TransactionTypeBuilder::MultiSig { signers, threshold } => {
-                if threshold == 0 || threshold as usize > signers.len() {
+                if threshold as usize > signers.len() || (!signers.is_empty() && threshold == 0) {
                     return Err(GenerationError::Proof(ProofGenerationError::Format));
                 }
 

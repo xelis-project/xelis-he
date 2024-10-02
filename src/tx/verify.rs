@@ -259,7 +259,7 @@ impl Transaction {
         if let Some((signers, threshold)) = state.get_multisig_for_account(&self.source).map_err(VerificationError::State)? {
             if let Some(signatures) = self.get_multisisg() {
                 // The multisig must have the exact same signers count as threshold
-                if signatures.len() != threshold as usize {
+                if signatures.is_empty() || signatures.len() != threshold as usize {
                     return Err(VerificationError::Proof(ProofVerificationError::Format));
                 }
 
@@ -397,7 +397,9 @@ impl Transaction {
                 transcript.append_u64(b"amount", *amount);
             },
             TransactionType::MultiSig { signers, threshold } => {
-                if *threshold == 0 || *threshold as usize > signers.len() {
+                // Threshold must be less or equal than the number of signers
+                // It can only be zero if there are no signers
+                if *threshold as usize > signers.len() || (!signers.is_empty() && *threshold == 0) {
                     return Err(VerificationError::Proof(ProofVerificationError::Format));
                 }
 
