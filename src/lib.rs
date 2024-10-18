@@ -15,7 +15,7 @@ pub use elgamal::{
     ecdlp, DecryptHandle, ECDLPInstance, ElGamalCiphertext, ElGamalKeypair, ElGamalPubkey,
     ElGamalSecretKey, PedersenCommitment, Signature,
 };
-pub use transcript::TranscriptError;
+pub use transcript::{ProtocolTranscript, TranscriptError};
 pub use tx::{builder, SmartContractCall, Transaction, TransactionType, Transfer};
 
 pub use tx::BlockchainVerificationState;
