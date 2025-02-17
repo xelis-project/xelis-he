@@ -440,6 +440,7 @@ impl TransactionBuilder {
     
                         let ct_validity_proof = CiphertextValidityProof::new(
                             &transfer.dest_pubkey,
+                            source_keypair.pubkey(),
                             transfer.inner.amount,
                             &transfer.amount_opening,
                             &mut transcript,

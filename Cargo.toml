@@ -6,8 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bulletproofs = { git = "https://github.com/xelis-project/bulletproofs", branch = "main", version = "5.0.2" }
-curve25519-dalek = { version = "4.1.1", features = ["digest", "group", "rand_core", "serde", "ecdlp"], git = "https://github.com/xelis-project/curve25519-dalek", branch = "main" }
+bulletproofs = { git = "https://github.com/xelis-project/bulletproofs", branch = "master", version = "5.0.2" }
+curve25519-dalek = { version = "4.1.1", features = ["digest", "group", "rand_core", "serde", "ecdlp"], git = "https://github.com/xelis-project/curve25519-dalek", branch = "master" }
 bytemuck = { version = "1.14.0", features = ["derive"] }
 lazy_static = "1.4.0"
 merlin = "3.0.0"

@@ -217,6 +217,7 @@ impl CommitmentEqProof {
 pub struct CiphertextValidityProof {
     Y_0: CompressedRistretto,
     Y_1: CompressedRistretto,
+    Y_2: CompressedRistretto,
     z_r: Scalar,
     z_x: Scalar,
 }
@@ -225,6 +226,7 @@ pub struct CiphertextValidityProof {
 impl CiphertextValidityProof {
     pub fn new(
         destination_pubkey: &ElGamalPubkey,
+        source_pubkey: &ElGamalPubkey,
         amount: u64,
         opening: &PedersenOpening,
         transcript: &mut Transcript,
@@ -232,6 +234,7 @@ impl CiphertextValidityProof {
         transcript.ciphertext_validity_proof_domain_separator();
 
         let P_dest = destination_pubkey.as_point();
+        let P_source = source_pubkey.as_point();
 
         let x = Scalar::from(amount);
         let r = opening.as_scalar();
@@ -241,9 +244,11 @@ impl CiphertextValidityProof {
 
         let Y_0 = RistrettoPoint::multiscalar_mul(vec![&y_r, &y_x], vec![&(*H), &G]).compress();
         let Y_1 = (&y_r * P_dest).compress();
+        let Y_2 =  (&y_r * P_source).compress();
 
         transcript.append_point(b"Y_0", &Y_0);
         transcript.append_point(b"Y_1", &Y_1);
+        transcript.append_point(b"Y_2", &Y_2);
 
         let c = transcript.challenge_scalar(b"c");
         transcript.challenge_scalar(b"w");
@@ -255,14 +260,16 @@ impl CiphertextValidityProof {
         y_r.zeroize();
         y_x.zeroize();
 
-        Self { Y_0, Y_1, z_r, z_x }
+        Self { Y_0, Y_1, Y_2, z_r, z_x }
     }
 
     pub fn pre_verify(
         &self,
         commitment: &PedersenCommitment,
         dest_pubkey: &ElGamalPubkey,
+        source_pubkey: &ElGamalPubkey,
         dest_handle: &DecryptHandle,
+        source_handle: &DecryptHandle,
         transcript: &mut Transcript,
         batch_collector: &mut BatchCollector,
     ) -> Result<(), ProofVerificationError> {
@@ -270,6 +277,7 @@ impl CiphertextValidityProof {
 
         transcript.validate_and_append_point(b"Y_0", &self.Y_0)?;
         transcript.validate_and_append_point(b"Y_1", &self.Y_1)?;
+        transcript.validate_and_append_point(b"Y_2", &self.Y_2)?;
 
         let c = transcript.challenge_scalar(b"c");
         let w = transcript.challenge_scalar(b"w");
@@ -284,11 +292,17 @@ impl CiphertextValidityProof {
             .Y_1
             .decompress()
             .ok_or(ProofVerificationError::CiphertextValidityProof)?;
+        let Y_2 = self
+            .Y_2
+            .decompress()
+            .ok_or(ProofVerificationError::CiphertextValidityProof)?;
 
         let P_dest = dest_pubkey.as_point();
+        let P_source = source_pubkey.as_point();
 
         let C = commitment.as_point();
         let D_dest = dest_handle.as_point();
+        let D_source = source_handle.as_point();
 
         let batch_factor = Scalar::random(&mut OsRng);
 
@@ -297,13 +311,19 @@ impl CiphertextValidityProof {
         // z_r * H
         batch_collector.h_scalar += self.z_r * batch_factor;
 
+        let w_z_r = w * self.z_r;
+        let w_negated_c = w_negated * c;
+
         batch_collector.dynamic_scalars.extend(
             [
                 -c,            // -c
                 -Scalar::ONE,  // -identity
-                w * self.z_r,  // w * z_r
-                w_negated * c, // -w * c
+                w_z_r,  // w * z_r
+                w_negated_c, // -w * c
                 w_negated,     // -w
+                w * w_z_r,       // w * z_r
+                w * w_negated_c, // -w * c
+                w * w_negated,   // -w
             ]
             .map(|s| s * batch_factor),
         );
@@ -313,6 +333,9 @@ impl CiphertextValidityProof {
             P_dest, // P_dest
             D_dest, // D_dest
             &Y_1,   // Y_1
+            P_source, // P_source
+            D_source, // D_source
+            &Y_2,     // Y_2
         ]);
 
         Ok(())
@@ -322,6 +345,7 @@ impl CiphertextValidityProof {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&self.Y_0.to_bytes());
         bytes.extend_from_slice(&self.Y_1.to_bytes());
+        bytes.extend_from_slice(&self.Y_2.to_bytes());
         bytes.extend_from_slice(&self.z_r.to_bytes());
         bytes.extend_from_slice(&self.z_x.to_bytes());
         bytes
@@ -372,6 +396,7 @@ mod tests {
     #[test]
     fn test_ciphertext_proof() {
         let mut t = Transcript::new(b"test_ciphertext_proof");
+        let alice = ElGamalKeypair::keygen();
         let bob = ElGamalKeypair::keygen();
 
         // Generate the commitment
@@ -381,9 +406,10 @@ mod tests {
 
         // Create the receiver handle
         let bob_handle = bob.pubkey().decrypt_handle(&opening);
+        let alice_handle = alice.pubkey().decrypt_handle(&opening);
 
         // Create the proof
-        let proof = CiphertextValidityProof::new(bob.pubkey(), amount, &opening, &mut t);
+        let proof = CiphertextValidityProof::new(bob.pubkey(), alice.pubkey(), amount, &opening, &mut t);
 
         // Regenerate a new transcript for the verification for testing
         let mut t = Transcript::new(b"test_ciphertext_proof");
@@ -391,7 +417,9 @@ mod tests {
         let res = proof.pre_verify(
             &commitment,
             bob.pubkey(),
+            alice.pubkey(),
             &bob_handle,
+            &alice_handle,
             &mut t,
             &mut batch_collector,
         );

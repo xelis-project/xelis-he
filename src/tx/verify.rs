@@ -241,7 +241,7 @@ impl Transaction {
             .collect::<Result<Vec<_>, DecompressionError>>()
             .map_err(ProofVerificationError::from)?;
 
-        let owner = self
+        let source_decompressed = self
             .source
             .decompress()
             .map_err(|err| VerificationError::Proof(err.into()))?;
@@ -251,7 +251,7 @@ impl Transaction {
 
         // 0. Verify Signature
         let (bytes, multisig_index) = self.to_bytes();
-        if !self.signature.verify(&bytes, &owner) {
+        if !self.signature.verify(&bytes, &source_decompressed) {
             return Err(VerificationError::Proof(ProofVerificationError::Signature));
         }
 
@@ -318,7 +318,7 @@ impl Transaction {
                 .append_commitment(b"new_source_commitment", &commitment.new_source_commitment);
 
             commitment.new_commitment_eq_proof.pre_verify(
-                &owner,
+                &source_decompressed,
                 &new_ct,
                 &new_source_commitment,
                 &mut transcript,
@@ -385,7 +385,9 @@ impl Transaction {
                     transfer.ct_validity_proof.pre_verify(
                         &decompressed.amount_commitment,
                         &receiver,
+                        &source_decompressed,
                         &decompressed.amount_receiver_handle,
+                        &decompressed.amount_sender_handle,
                         &mut transcript,
                         sigma_batch_collector,
                     )?;
