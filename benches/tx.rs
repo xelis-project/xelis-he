@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use std::iter;
+use std::{iter, thread};
 use xelis_he::{
     builder::{TransactionBuilder, TransactionTypeBuilder, TransferBuilder},
     Hash,
@@ -249,4 +249,97 @@ criterion_group!(
         batching_bench_16x255
 );
 
-criterion_main!(create_verify_n_tx, batching_bench);
+fn batching_bench_multi_util(c: &mut Criterion, batch_size: usize, n_transfers: usize, n_threads: usize) {
+    let mut group = c.benchmark_group(&format!("Verify a batch of {batch_size} tx ({n_threads} threads) with {n_transfers} transfers"));
+
+    group.bench_function("verification", |bencher| {
+        let bob = Account::new([(Hash([0; 32]), 100000)]);
+        let alice = Account::new([(Hash([0; 32]), 0)]);
+
+        let ledger = Ledger {
+            accounts: [
+                (bob.keypair.pubkey().compress(), bob.clone()),
+                (alice.keypair.pubkey().compress(), alice.clone()),
+            ]
+            .into(),
+            multisig_accounts: Default::default(),
+        };
+        let mut prover_ledger = ledger.clone();
+
+        let bob = bob.keypair.pubkey().compress();
+        let alice = alice.keypair.pubkey().compress();
+
+        let mut state = GenerationBalance {
+            balances: [(Hash([0; 32]), 100000)].into(),
+            account: ledger.get_account(&bob).clone(),
+        };
+        let make_tx = || {
+            let builder = TransactionBuilder {
+                version: 1,
+                source: bob,
+                data: TransactionTypeBuilder::Transfers(
+                    iter::repeat_with(|| TransferBuilder {
+                        dest_pubkey: alice,
+                        amount: 1,
+                        asset: Hash([0; 32]),
+                        extra_data: None,
+                    })
+                    .take(n_transfers)
+                    .collect(),
+                ),
+                fee: 3,
+                nonce: 0,
+            };
+
+            let cost = builder.get_transaction_cost(&Hash([0; 32]));
+
+            let keypair = &ledger.get_account(&bob).keypair;
+            let tx = builder.build(&mut state, keypair).unwrap();
+
+            tx.apply_without_verify(&mut prover_ledger).unwrap();
+
+            *state.balances.get_mut(&Hash([0; 32])).unwrap() -= cost;
+            state.account = prover_ledger.get_account(&bob).clone();
+
+            tx
+        };
+
+        let groups = iter::repeat_n(
+                iter::repeat_with(make_tx)
+                            .take(batch_size)
+                            .collect::<Vec<_>>(),
+        n_threads)
+            .collect::<Vec<_>>();
+
+        bencher.iter(|| {
+            let mut handles = Vec::with_capacity(n_threads);
+            for txs in groups.clone() {
+                let mut ledger = ledger.clone();
+                let handle = thread::spawn(move || Transaction::verify_batch(&txs, &mut ledger).unwrap());
+                handles.push(handle);
+            }
+
+            for handle in handles {
+                handle.join().unwrap();
+            }
+        })
+    });
+}
+
+fn batching_bench_multi_2500(c: &mut Criterion) {
+    batching_bench_multi_util(c, 2500, 1, 8);
+}
+
+fn batching_bench_multi_16x255(c: &mut Criterion) {
+    batching_bench_multi_util(c, 16, 255, 8);
+}
+
+criterion_group!(
+    name = batching_bench_multi;
+    config = Criterion::default().sample_size(10);
+    targets =
+    batching_bench_multi_2500,
+    batching_bench_multi_16x255,
+);
+
+criterion_main!(create_verify_n_tx, batching_bench, batching_bench_multi);
