@@ -104,12 +104,17 @@ impl CommitmentEqProof {
         transcript.append_point(b"Y_2", &Y_2);
 
         let c = transcript.challenge_scalar(b"c");
-        transcript.challenge_scalar(b"w");
 
         // compute the masked values
         let z_s = &(&c * s) + &y_s;
         let z_x = &(&c * &x) + &y_x;
         let z_r = &(&c * r) + &y_r;
+
+        transcript.append_scalar(b"z_s", &z_s);
+        transcript.append_scalar(b"z_x", &z_x);
+        transcript.append_scalar(b"z_r", &z_r);
+
+        transcript.challenge_scalar(b"w");
 
         // zeroize random scalars
         y_s.zeroize();
@@ -148,6 +153,11 @@ impl CommitmentEqProof {
         transcript.validate_and_append_point(b"Y_2", &self.Y_2)?;
 
         let c = transcript.challenge_scalar(b"c");
+
+        transcript.append_scalar(b"z_s", &self.z_s);
+        transcript.append_scalar(b"z_x", &self.z_x);
+        transcript.append_scalar(b"z_r", &self.z_r);
+
         let w = transcript.challenge_scalar(b"w"); // w used for batch verification
         let ww = &w * &w;
 
@@ -251,11 +261,15 @@ impl CiphertextValidityProof {
         transcript.append_point(b"Y_2", &Y_2);
 
         let c = transcript.challenge_scalar(b"c");
-        transcript.challenge_scalar(b"w");
 
         // masked message and opening
         let z_r = &(&c * r) + &y_r;
         let z_x = &(&c * &x) + &y_x;
+
+        transcript.append_scalar(b"z_r", &z_r);
+        transcript.append_scalar(b"z_x", &z_x);
+
+        transcript.challenge_scalar(b"w");
 
         y_r.zeroize();
         y_x.zeroize();
@@ -280,6 +294,10 @@ impl CiphertextValidityProof {
         transcript.validate_and_append_point(b"Y_2", &self.Y_2)?;
 
         let c = transcript.challenge_scalar(b"c");
+
+        transcript.append_scalar(b"z_r", &self.z_r);
+        transcript.append_scalar(b"z_x", &self.z_x);
+
         let w = transcript.challenge_scalar(b"w");
 
         let w_negated = -&w;
