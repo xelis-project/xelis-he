@@ -7,7 +7,6 @@ use curve25519_dalek::{
     scalar::Scalar,
     traits::{Identity, MultiscalarMul},
 };
-use rand::rngs::OsRng;
 use serde::de::Error as SerdeError;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_512};
@@ -193,7 +192,7 @@ impl ElGamalKeypair {
     }
 
     pub fn sign(&self, message: &[u8]) -> Signature {
-        let k = Scalar::random(&mut OsRng);
+        let k = Scalar::random(&mut rand::rng());
         let r = k * *H;
         let e = hash_and_point_to_scalar(&self.pk.compress(), message, &r);
         let s = self.sk.as_scalar().invert() * e + k;
@@ -204,7 +203,7 @@ impl ElGamalKeypair {
 impl ElGamalKeypair {
     pub fn keygen() -> Self {
         // secret scalar should be non-zero except with negligible probability
-        let s = Scalar::random(&mut OsRng);
+        let s = Scalar::random(&mut rand::rng());
         let keypair = Self::keygen_with_secret(s);
 
         keypair
@@ -242,7 +241,7 @@ impl PedersenOpening {
         Self(scalar)
     }
     pub fn generate_new() -> Self {
-        PedersenOpening(Scalar::random(&mut OsRng))
+        PedersenOpening(Scalar::random(&mut rand::rng()))
     }
 
     pub fn as_scalar(&self) -> Scalar {

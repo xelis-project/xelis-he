@@ -12,7 +12,6 @@ use curve25519_dalek::{
 };
 use lazy_static::lazy_static;
 use merlin::Transcript;
-use rand::rngs::OsRng;
 use std::iter;
 use thiserror::Error;
 use zeroize::Zeroize;
@@ -88,10 +87,11 @@ impl CommitmentEqProof {
         let x = Scalar::from(amount);
         let r = opening.as_scalar();
 
+        let mut rng = rand::rng();
         // generate random masking factors that also serves as nonces
-        let mut y_s = Scalar::random(&mut OsRng);
-        let mut y_x = Scalar::random(&mut OsRng);
-        let mut y_r = Scalar::random(&mut OsRng);
+        let mut y_s = Scalar::random(&mut rng);
+        let mut y_x = Scalar::random(&mut rng);
+        let mut y_r = Scalar::random(&mut rng);
 
         let Y_0 = (&y_s * P_source).compress();
         let Y_1 =
@@ -178,7 +178,7 @@ impl CommitmentEqProof {
             .decompress()
             .ok_or(ProofVerificationError::CommitmentEqProof)?;
 
-        let batch_factor = Scalar::random(&mut OsRng);
+        let batch_factor = Scalar::random(&mut rand::rng());
 
         // w * z_x * G + ww * z_x * G
         batch_collector.g_scalar += (w * self.z_x + ww * self.z_x) * batch_factor;
@@ -249,8 +249,9 @@ impl CiphertextValidityProof {
         let x = Scalar::from(amount);
         let r = opening.as_scalar();
 
-        let mut y_r = Scalar::random(&mut OsRng);
-        let mut y_x = Scalar::random(&mut OsRng);
+        let mut rng = rand::rng();
+        let mut y_r = Scalar::random(&mut rng);
+        let mut y_x = Scalar::random(&mut rng);
 
         let Y_0 = RistrettoPoint::multiscalar_mul(vec![&y_r, &y_x], vec![&(*H), &G]).compress();
         let Y_1 = (&y_r * P_dest).compress();
@@ -322,7 +323,7 @@ impl CiphertextValidityProof {
         let D_dest = dest_handle.as_point();
         let D_source = source_handle.as_point();
 
-        let batch_factor = Scalar::random(&mut OsRng);
+        let batch_factor = Scalar::random(&mut rand::rng());
 
         // z_x * G
         batch_collector.g_scalar += self.z_x * batch_factor;
