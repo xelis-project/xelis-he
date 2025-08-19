@@ -40,6 +40,7 @@ fn n_tx_bench(c: &mut Criterion, n_transfers: usize) {
                 .collect(),
             ),
             fee: 3,
+            fee_max: 3,
             nonce: 0,
         };
 
@@ -165,6 +166,7 @@ fn batching_bench_util(c: &mut Criterion, batch_size: usize, n_transfers: usize)
                     .collect(),
                 ),
                 fee: 3,
+                fee_max: 3,
                 nonce: 0,
             };
 
@@ -288,6 +290,7 @@ fn batching_bench_multi_util(c: &mut Criterion, batch_size: usize, n_transfers: 
                     .collect(),
                 ),
                 fee: 3,
+                fee_max: 3,
                 nonce: 0,
             };
 

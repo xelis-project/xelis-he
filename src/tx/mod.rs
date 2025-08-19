@@ -104,7 +104,13 @@ pub struct Transaction {
     pub(crate) version: u8,
     pub(crate) source: CompressedPubkey,
     pub(crate) data: TransactionType,
+    /// Currently set fee
     pub(crate) fee: u64,
+    /// Maximum fee allowed in case of
+    /// a high required fee
+    /// This amount will be reserved in advance
+    /// and should be paid back
+    pub(crate) fee_max: u64,
     pub(crate) nonce: u64,
     /// We have one source_commitment and equality proof per asset used in the tx.
     pub(crate) new_source_commitments: Vec<NewSourceCommitment>,

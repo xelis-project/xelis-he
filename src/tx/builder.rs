@@ -34,6 +34,7 @@ use super::{MultiSig, SmartContractCall};
 pub enum GenerationError<T> {
     State(T),
     Proof(#[from] ProofGenerationError),
+    FeeInvalid,
 }
 
 /// If the returned balance and ct do not match, the build function will panic and/or
@@ -80,6 +81,7 @@ pub struct TransactionBuilder {
     pub source: CompressedPubkey,
     pub data: TransactionTypeBuilder,
     pub fee: u64,
+    pub fee_max: u64,
     pub nonce: u64,
 }
 
@@ -112,6 +114,7 @@ pub struct TransactionUnsigned {
     source: CompressedPubkey,
     data: TransactionType,
     fee: u64,
+    fee_max: u64,
     nonce: u64,
     source_commitments: Vec<NewSourceCommitment>,
     range_proof: RangeProof,
@@ -209,6 +212,7 @@ impl TransactionUnsigned {
             source: self.source,
             data: self.data,
             fee: self.fee,
+            fee_max: self.fee_max,
             nonce: self.nonce,
             new_source_commitments: self.source_commitments,
             range_proof: self.range_proof,
@@ -227,7 +231,7 @@ impl TransactionBuilder {
     ) -> ElGamalCiphertext {
         if asset.is_zeros() {
             // Fees are applied to the native blockchain asset only.
-            ct -= Scalar::from(self.fee);
+            ct -= Scalar::from(self.fee_max);
         }
 
         match &self.data {
@@ -263,7 +267,7 @@ impl TransactionBuilder {
 
         if asset.is_zeros() {
             // Fees are applied to the native blockchain asset only.
-            cost += self.fee;
+            cost += self.fee_max;
         }
 
         match &self.data {
@@ -324,6 +328,10 @@ impl TransactionBuilder {
     ) -> Result<TransactionUnsigned, GenerationError<B::Error>> {
         // 0.a Create the commitments
 
+        if self.fee > self.fee_max {
+            return Err(GenerationError::FeeInvalid)
+        }
+
         let used_assets = self.used_assets();
 
         let transfers = if let TransactionTypeBuilder::Transfers(transfers) = &mut self.data {
@@ -357,7 +365,7 @@ impl TransactionBuilder {
         };
 
         let mut transcript =
-            Transaction::prepare_transcript(self.version, &self.source, self.fee, self.nonce);
+            Transaction::prepare_transcript(self.version, &self.source, self.fee, self.fee_max, self.nonce);
 
         let mut range_proof_openings: Vec<_> =
             iter::repeat_with(|| PedersenOpening::generate_new().as_scalar())
@@ -424,7 +432,7 @@ impl TransactionBuilder {
             TransactionTypeBuilder::Transfers(_) => {
                 range_proof_values.reserve(transfers.len());
                 range_proof_openings.reserve(transfers.len());
-    
+
                 let transfers = transfers
                     .into_iter()
                     .map(|transfer| {
@@ -537,6 +545,7 @@ impl TransactionBuilder {
             source: self.source,
             data,
             fee: self.fee,
+            fee_max: self.fee_max,
             nonce: self.nonce,
             source_commitments,
             range_proof,

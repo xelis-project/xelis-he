@@ -17,6 +17,7 @@ use crate::{
 pub enum VerificationError<T> {
     State(T),
     InvalidNonce,
+    InvalidFee,
     Proof(#[from] ProofVerificationError),
 }
 
@@ -24,6 +25,13 @@ pub enum VerificationError<T> {
 /// state, where the transactions can get applied in order.
 pub trait BlockchainVerificationState {
     type Error;
+
+    /// Verify the TX fee and returns, if required, how much we should refund from
+    /// `fee_max` (left over of fees)
+    fn verify_fee(&self, fee: u64, fee_max: u64) -> Result<Option<u64>, Self::Error> {
+        // Do your own logic here
+        Ok(Some(fee_max - fee))
+    }
 
     /// Get the balance ciphertext from an account
     fn get_account_balance(
@@ -113,7 +121,7 @@ impl Transaction {
 
         if asset.is_zeros() {
             // Fees are applied to the native blockchain asset only.
-            bal += Scalar::from(self.fee);
+            bal += Scalar::from(self.fee_max);
         }
 
         match &self.data {
@@ -147,12 +155,14 @@ impl Transaction {
         version: u8,
         source_pubkey: &CompressedPubkey,
         fee: u64,
+        fee_max: u64,
         nonce: u64,
     ) -> Transcript {
         let mut transcript = Transcript::new(b"transaction-proof");
         transcript.append_u64(b"version", version.into());
         transcript.append_pubkey(b"source_pubkey", source_pubkey);
         transcript.append_u64(b"fee", fee);
+        transcript.append_u64(b"fee_max", fee_max);
         transcript.append_u64(b"nonce", nonce);
         transcript
     }
@@ -206,6 +216,15 @@ impl Transaction {
         sigma_batch_collector: &mut BatchCollector,
     ) -> Result<(Transcript, Vec<(RistrettoPoint, CompressedRistretto)>), VerificationError<B::Error>>
     {
+        // Check that the fee is below our fee max config
+        if self.fee > self.fee_max {
+            return Err(VerificationError::InvalidFee)
+        }
+
+        // Verify the required fee, if fee_max is not fully used, refund the left-over later
+        let refund = state.verify_fee(self.fee, self.fee_max)
+            .map_err(VerificationError::State)?;
+
         // First, check the nonce
         let account_nonce = state
             .get_account_nonce(&self.source)
@@ -247,7 +266,7 @@ impl Transaction {
             .map_err(|err| VerificationError::Proof(err.into()))?;
 
         let mut transcript =
-            Self::prepare_transcript(self.version, &self.source, self.fee, self.nonce);
+            Self::prepare_transcript(self.version, &self.source, self.fee, self.fee_max, self.nonce);
 
         // 0. Verify Signature
         let (bytes, multisig_index) = self.to_bytes();
@@ -308,7 +327,7 @@ impl Transaction {
 
             // Ciphertext containing all the funds spent for this commitment
             let output = self.get_sender_output_ct(&commitment.asset, &transfers_decompressed)
-            .map_err(|err| VerificationError::Proof(err.into()))?;
+                .map_err(|err| VerificationError::Proof(err.into()))?;
 
             // Compute the new final balance for account
             let new_ct = source_current_ciphertext - &output;
@@ -477,6 +496,23 @@ impl Transaction {
                 .collect()
         };
 
+        // We have a left-over, refund it
+        if let Some(refund) = refund {
+            let native_asset = Hash::default();
+
+            // Get the balance as a receiver to prevent breaking the link between ZK Proofs
+            // in case we have more than one TX executed from the same source key
+            let ciphertext = state.get_account_balance(&self.source, &native_asset, Role::Receiver)
+                .map_err(VerificationError::State)?;
+
+            let mut decompressed = ciphertext.decompress()
+                .map_err(|err| VerificationError::Proof(err.into()))?;
+
+            decompressed += Scalar::from(refund);
+
+            state.update_account_balance(&self.source, &native_asset, decompressed.compress(), Role::Receiver)
+                .map_err(VerificationError::State)?;
+        }
         // 3. Verify the aggregated RangeProof
 
         // range proof will be verified in batch by caller

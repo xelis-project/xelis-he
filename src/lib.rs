@@ -251,6 +251,50 @@ pub mod tests {
     use mock::*;
     use curve25519_dalek::{RistrettoPoint, Scalar};
 
+     #[test]
+    fn test_burn_with_fee_max() {
+        let alice = Account::new([(Hash([0; 32]), 100)]);
+        let tx = {
+            let builder = TransactionBuilder {
+                version: 1,
+                source: alice.keypair.pubkey().compress(),
+                data: TransactionTypeBuilder::Burn {
+                    asset: Hash([0; 32]),
+                    amount: 10,
+                },
+                fee: 1,
+                fee_max: 50,
+                nonce: 0,
+            };
+
+            assert_eq!(60, builder.get_transaction_cost(&Hash([0; 32])));
+            assert_eq!(1, builder.used_assets().len());
+
+            builder
+                .build(
+                    &mut GenerationBalance {
+                        balances: [(Hash([0; 32]), 100)].into(),
+                        account: alice.clone(),
+                    },
+                    &alice.keypair,
+                )
+                .unwrap()
+        };
+
+        let mut ledger = Ledger {
+            accounts: [(alice.keypair.pubkey().compress(), alice.clone())].into(),
+            multisig_accounts: Default::default(),
+        };
+
+        Transaction::verify_batch(&vec![tx], &mut ledger).unwrap();
+
+        assert_eq!(
+            ledger.get_bal_decrypted(&alice.keypair.pubkey().compress(), &Hash([0; 32])),
+            // 10 for burn and 1 for fee
+            RistrettoPoint::mul_base(&Scalar::from(100u64 - 11))
+        );
+    }
+
     #[test]
     fn test_invalid_multisig() {
         let alice = Account::new([(Hash([0; 32]), 100)]);
@@ -268,6 +312,7 @@ pub mod tests {
                     extra_data: Default::default(),
                 }]),
                 fee: 1,
+                fee_max: 1,
                 nonce: 0,
             };
 
@@ -323,6 +368,7 @@ pub mod tests {
                     extra_data: Default::default(),
                 }]),
                 fee: 1,
+                fee_max: 1,
                 nonce: 0,
             };
 
@@ -383,6 +429,7 @@ pub mod tests {
                     extra_data: Default::default(),
                 }]),
                 fee: 1,
+                fee_max: 1,
                 nonce: 0,
             };
 
@@ -445,6 +492,7 @@ pub mod tests {
                     extra_data: Default::default(),
                 }]),
                 fee: 1,
+                fee_max: 1,
                 nonce: 0,
             };
 
@@ -508,6 +556,7 @@ pub mod tests {
                     threshold: 2,
                 },
                 fee: 1,
+                fee_max: 1,
                 nonce: 0,
             };
 
@@ -563,6 +612,7 @@ pub mod tests {
                     threshold: 0,
                 },
                 fee: 1,
+                fee_max: 1,
                 nonce: 0,
             };
 
@@ -623,6 +673,7 @@ pub mod tests {
                     amount: 10,
                 },
                 fee: 1,
+                fee_max: 1,
                 nonce: 0,
             };
 
@@ -666,6 +717,7 @@ pub mod tests {
                     amount: 50,
                 },
                 fee: 1,
+                fee_max: 1,
                 nonce: 0,
             };
 
@@ -714,6 +766,7 @@ pub mod tests {
                     amount: 100,
                 },
                 fee: 0,
+                fee_max: 0,
                 nonce: 0,
             };
 
@@ -764,6 +817,7 @@ pub mod tests {
                     amount: 10,
                 },
                 fee: 1,
+                fee_max: 1,
                 nonce: 0,
             };
 
@@ -873,6 +927,7 @@ pub mod tests {
                     },
                 ]),
                 fee: 1,
+                fee_max: 1,
                 nonce: 0,
             };
             assert_eq!(52 + 4 + 1, builder.get_transaction_cost(&Hash([0; 32])));
@@ -900,6 +955,7 @@ pub mod tests {
                     extra_data: Default::default(),
                 }]),
                 fee: 1,
+                fee_max: 1,
                 nonce: 0,
             };
             assert_eq!(30 + 1, builder.get_transaction_cost(&Hash([0; 32])));
@@ -980,6 +1036,7 @@ pub mod tests {
                     extra_data: Some(PlaintextData(very_secret_message.clone())),
                 }]),
                 fee: 10,
+                fee_max: 10,
                 nonce: 0,
             };
             assert_eq!(10, builder.get_transaction_cost(&Hash([0; 32])));
@@ -1056,6 +1113,7 @@ pub mod tests {
                     extra_data: Default::default(),
                 }]),
                 fee: 10,
+                fee_max: 10,
                 nonce: 0,
             };
             assert_eq!(10, builder.get_transaction_cost(&Hash([0; 32])));
